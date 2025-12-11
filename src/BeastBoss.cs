@@ -8,7 +8,7 @@ using Oxide.Game.Rust.Cui;
 
 namespace Oxide.Plugins
 {
-    [Info("BeastBosses", "", "0.4.0")]
+    [Info("BeastBoss", "Somescrub", "0.4.0")]
     [Description("BossMonster-style animal bosses with tiers, lockouts, spawnpoints, events and a boss health HUD")]
     public class BeastBoss : RustPlugin
     {
@@ -24,6 +24,7 @@ namespace Oxide.Plugins
                 {
                     DisplayName = "Dire Bear",
                     TierId = "T1",
+                    Theme = "fire",
                     Prefab = "assets/rust.ai/agents/bear/bear.prefab",
                     BaseHealth = 2500f,
                     DamageMultiplier = 1.5f,
@@ -109,6 +110,7 @@ namespace Oxide.Plugins
                 {
                     DisplayName = "Nightfang",
                     TierId = "T1",
+                    Theme = "frost",
                     Prefab = "assets/rust.ai/agents/wolf/wolf.prefab",
                     BaseHealth = 1500f,
                     DamageMultiplier = 1.3f,
@@ -212,6 +214,58 @@ namespace Oxide.Plugins
 
             // Boss HUD config (roughly compatible look with TargetHealthHUD)
             public UiConfig Ui = new UiConfig();
+
+            /*
+             * FX Library keys and usage:
+             *  - "roar_blast"   : Used by DoRoar() for the main roar visual + optional impact FX.
+             *  - "fire_trail"   : Used by DoFireTrail() for the trail FX behind fire-themed beasts.
+             *  - "frost_aura"   : Used by DoFrostAura() as the primary cold aura visual.
+             *  - "toxic_aura"   : Optional alternative to frost_aura for poison-themed beasts.
+             *  - "ground_impact": Used by DoRoar() and other impact-style abilities for ground shock FX.
+             *  - "enrage_burst" : Used by TriggerEnrage() for the enrage burst visual.
+             *  - "summon_burst" : Used by DoCubSummon() when spawning minions.
+             *
+             * These keys are defined in ConfigData.FxLibrary and can be customized in BeastBoss.json
+             * without changing code.
+             */
+            public Dictionary<string, List<string>> FxLibrary = new Dictionary<string, List<string>>
+            {
+                // Generic categories used by abilities
+                ["roar_blast"] = new List<string>
+                {
+                    "assets/bundled/prefabs/fx/gestures/howl.prefab",
+                    "assets/bundled/prefabs/fx/dustwave.prefab"
+                },
+                ["fire_trail"] = new List<string>
+                {
+                    "assets/bundled/prefabs/fireball_small.prefab",
+                    "assets/bundled/prefabs/fireball_medium.prefab"
+                },
+                ["frost_aura"] = new List<string>
+                {
+                    "assets/bundled/prefabs/fx/hold_breath.prefab"
+                },
+                ["toxic_aura"] = new List<string>
+                {
+                    "assets/content/effects/prefabs/poisoncloud.prefab",
+                    "assets/content/effects/prefabs/green_spores.prefab"
+                },
+                ["ground_impact"] = new List<string>
+                {
+                    "assets/bundled/prefabs/fx/groundimpact.prefab",
+                    "assets/bundled/prefabs/fx/dustwave.prefab"
+                },
+                ["enrage_burst"] = new List<string>
+                {
+                    "assets/bundled/prefabs/fx/gestures/flex.prefab",
+                    "assets/bundled/prefabs/fireball_small.prefab"
+                },
+                ["summon_burst"] = new List<string>
+                {
+                    "assets/bundled/prefabs/fx/takeloot.prefab",
+                    "assets/bundled/prefabs/fx/item_pickup.prefab"
+                }
+            };
         }
 
         public class UiConfig
@@ -242,6 +296,7 @@ namespace Oxide.Plugins
         {
             public string DisplayName;
             public string TierId;
+            public string Theme;
             public string Prefab;
             public float BaseHealth;
             public float DamageMultiplier;
@@ -939,6 +994,34 @@ namespace Oxide.Plugins
             PrintToChat(_config.ChatPrefix + message);
         }
 
+        private string GetRandomFx(string key, string fallback = null, string theme = null)
+        {
+            if (_config != null && _config.FxLibrary != null)
+            {
+                // If theme is provided, try themed key first (e.g., "fire_roar_blast")
+                if (!string.IsNullOrEmpty(theme))
+                {
+                    var themedKey = theme + "_" + key;
+                    if (_config.FxLibrary.TryGetValue(themedKey, out var themedList) &&
+                        themedList != null &&
+                        themedList.Count > 0)
+                    {
+                        return themedList.GetRandom();
+                    }
+                }
+
+                // Fall back to generic key (e.g., "roar_blast")
+                if (_config.FxLibrary.TryGetValue(key, out var list) &&
+                    list != null &&
+                    list.Count > 0)
+                {
+                    return list.GetRandom();
+                }
+            }
+
+            return fallback;
+        }
+
         #endregion
 
         #region HUD Logic
@@ -1200,7 +1283,9 @@ namespace Oxide.Plugins
                 var s = _def.AbilityRoar;
                 var origin = _entity.transform.position + Vector3.up * 0.8f;
 
-                Effect.server.Run("assets/bundled/prefabs/fx/gestures/howl.prefab", origin);
+                // Pick a random roar FX (or fallback)
+                var roarFx = _plugin.GetRandomFx("roar_blast", "assets/bundled/prefabs/fx/gestures/howl.prefab", _def.Theme);
+                Effect.server.Run(roarFx, origin);
 
                 var players = GetPlayersInRange(origin, s.Radius);
                 foreach (var p in players)
@@ -1212,7 +1297,10 @@ namespace Oxide.Plugins
                     p.metabolism.bleeding.Add(s.Bleed);
 
                     p.SendConsoleCommand("gametip.showtoast", "warning", "A terrifying roar rattles you!");
-                    Effect.server.Run("assets/bundled/prefabs/fx/impact/impact_concrete.prefab", p.transform.position);
+
+                    // Optional impact FX at player
+                    var impactFx = _plugin.GetRandomFx("ground_impact", "assets/bundled/prefabs/fx/impact/impact_concrete.prefab", _def.Theme);
+                    Effect.server.Run(impactFx, p.transform.position);
                 }
             }
 
@@ -1292,7 +1380,8 @@ namespace Oxide.Plugins
                 var tickInterval = Mathf.Max(0.1f, s.TickRate);
 
                 var origin = _entity.transform.position + Vector3.up * 0.5f;
-                Effect.server.Run("assets/bundled/prefabs/fx/hold_breath.prefab", origin);
+                var castFx = _plugin.GetRandomFx("frost_aura", "assets/bundled/prefabs/fx/hold_breath.prefab", _def.Theme);
+                Effect.server.Run(castFx, origin);
 
                 _plugin.timer.Repeat(tickInterval, ticks, () =>
                 {
@@ -1311,7 +1400,8 @@ namespace Oxide.Plugins
                         p.SendConsoleCommand("gametip.showtoast", "warning", "You are chilled by a frost aura!");
                     }
 
-                    Effect.server.Run("assets/bundled/prefabs/fx/hold_breath.prefab", pos);
+                    var tickFx = _plugin.GetRandomFx("frost_aura", castFx, _def.Theme);
+                    Effect.server.Run(tickFx, pos);
                 });
             }
 
@@ -1338,7 +1428,10 @@ namespace Oxide.Plugins
                         childCombat.InitializeHealth(_def.BaseHealth * 0.25f, _def.BaseHealth * 0.25f);
                     }
 
-                    Effect.server.Run("assets/bundled/prefabs/fx/takeloot.prefab", spawnPos);
+                    Effect.server.Run(
+                        _plugin.GetRandomFx("summon_burst", "assets/bundled/prefabs/fx/takeloot.prefab", _def.Theme),
+                        spawnPos
+                    );
                 }
 
                 _plugin.PrintBossChat($"<color=#ffb700>{_def.DisplayName}</color> summons allies to its side!");
@@ -1351,8 +1444,10 @@ namespace Oxide.Plugins
                 _plugin.ApplyEnrageBuff(_entity, _def);
 
                 var pos = _entity.transform.position + Vector3.up * 0.5f;
-                if (!string.IsNullOrEmpty(s.EffectPrefab))
-                    Effect.server.Run(s.EffectPrefab, pos);
+
+                var fx = _plugin.GetRandomFx("enrage_burst", s.EffectPrefab, _def.Theme);
+                if (!string.IsNullOrEmpty(fx))
+                    Effect.server.Run(fx, pos);
 
                 _plugin.PrintBossChat($"<color=#ff0000>{_def.DisplayName}</color> becomes enraged!");
             }
@@ -1368,7 +1463,9 @@ namespace Oxide.Plugins
                     if (_entity == null || _entity.IsDestroyed) return;
 
                     var pos = _entity.transform.position;
-                    Effect.server.Run("assets/bundled/prefabs/fireball_small.prefab", pos);
+
+                    var trailFx = _plugin.GetRandomFx("fire_trail", "assets/bundled/prefabs/fireball_small.prefab", _def.Theme);
+                    Effect.server.Run(trailFx, pos);
 
                     var players = GetPlayersInRange(pos, s.Radius);
                     foreach (var p in players)
