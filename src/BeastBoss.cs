@@ -209,6 +209,10 @@ namespace Oxide.Plugins
 
             public float EventCheckIntervalSeconds = 60f;
 
+            // Enable entity scaling via EntityScaleManager plugin.
+            // If false, no scaling occurs. If true, requires EntityScaleManager to be installed.
+            public bool UseScaling = false;
+
             // Enable phase-based scaling (beasts scale as health drops to phases).
             // If false, only InitialScale and EnragedScale are applied.
             public bool UsePhaseScaling = false;
@@ -1078,7 +1082,11 @@ namespace Oxide.Plugins
             if (entity == null)
                 return;
 
-            // Reject non-positive / NaN scales.
+            // Global kill-switch: if scaling is disabled in config, do nothing.
+            if (!_config.UseScaling)
+                return;
+
+            // Reject non-positive / NaN / Infinity scale values.
             if (scale <= 0f || float.IsNaN(scale) || float.IsInfinity(scale))
                 return;
 
@@ -1094,20 +1102,20 @@ namespace Oxide.Plugins
             if (Mathf.Approximately(clampedScale, 1f))
                 return;
 
-            // Try to use EntityScaleManager API if that plugin is installed.
+            // Only use EntityScaleManager. If it is not installed or refuses the
+            // scale, we do not try to scale manually.
             var result = Interface.CallHook("API_ScaleEntity", entity, clampedScale);
+
+            // API_ScaleEntity returns a bool indicating success when present.
+            // If the hook is missing or returns something else, we just ignore it.
             if (result is bool b && b)
+            {
+                // Successfully scaled via EntityScaleManager.
                 return;
+            }
 
-            // Fallback: use native scaling directly.
-            var targetScale = Vector3.one * clampedScale;
-
-            if (entity.transform.localScale == targetScale && entity.networkEntityScale)
-                return;
-
-            entity.transform.localScale = targetScale;
-            entity.networkEntityScale = true;
-            entity.SendNetworkUpdate();
+            // If EntityScaleManager is not present or did not handle the scale,
+            // bail out. Do NOT touch transform.localScale directly.
         }
 
         #endregion
