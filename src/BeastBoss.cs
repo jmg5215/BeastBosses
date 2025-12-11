@@ -438,6 +438,11 @@ namespace Oxide.Plugins
 
         private StoredData _data;
 
+        private const string ExternalHudPermission = "targethealthhud.use";
+
+        // Players for whom we've temporarily revoked TargetHealthHUD permission
+        private readonly HashSet<ulong> _suspendedExternalHud = new HashSet<ulong>();
+
         private readonly HashSet<BaseEntity> _bosses = new HashSet<BaseEntity>();
         private readonly Dictionary<ulong, float> _damageMeter = new Dictionary<ulong, float>();
         private readonly Dictionary<NetworkableId, BeastDef> _beastDefs = new Dictionary<NetworkableId, BeastDef>();
@@ -513,6 +518,12 @@ namespace Oxide.Plugins
             _activeBossByTier.Clear();
             _bossTierById.Clear();
             _bossMarkers.Clear();
+
+            foreach (var userId in _suspendedExternalHud.ToList())
+            {
+                RestoreExternalHud(userId);
+            }
+            _suspendedExternalHud.Clear();
 
             SaveData();
         }
@@ -860,6 +871,41 @@ namespace Oxide.Plugins
             }
         }
 
+        private void SuspendExternalHud(BasePlayer player)
+        {
+            if (player == null) return;
+
+            var userId = player.userID;
+            var userIdStr = player.UserIDString;
+
+            // If we've already suspended for this player, do nothing
+            if (_suspendedExternalHud.Contains(userId))
+                return;
+
+            // Only revoke if they currently have the permission
+            if (!permission.UserHasPermission(userIdStr, ExternalHudPermission))
+                return;
+
+            _suspendedExternalHud.Add(userId);
+            permission.RevokeUserPermission(userIdStr, ExternalHudPermission);
+        }
+
+        private void RestoreExternalHud(ulong userId)
+        {
+            if (!_suspendedExternalHud.Contains(userId))
+                return;
+
+            _suspendedExternalHud.Remove(userId);
+
+            var userIdStr = userId.ToString();
+
+            // Only grant back if they don't already have it
+            if (!permission.UserHasPermission(userIdStr, ExternalHudPermission))
+            {
+                permission.GrantUserPermission(userIdStr, ExternalHudPermission, this);
+            }
+        }
+
         private BaseEntity SpawnBeast(BeastDef def, Vector3 pos)
         {
             var entity = GameManager.server.CreateEntity(def.Prefab, pos, Quaternion.identity, true);
@@ -1034,6 +1080,8 @@ namespace Oxide.Plugins
             var userId = player.userID;
             _hudBossTargets[userId] = boss;
 
+            SuspendExternalHud(player);
+
             // Ensure update timer
             if (!_hudUpdateTimers.ContainsKey(userId))
             {
@@ -1078,9 +1126,6 @@ namespace Oxide.Plugins
         private void ShowBossHud(BasePlayer player, BaseCombatEntity boss)
         {
             if (!_config.Ui.Enabled) return;
-
-            // Hide TargetHealthHUD while fighting a BeastBoss so only our HUD shows.
-            CuiHelper.DestroyUi(player, "TargetHealthHUD");
 
             float current = boss.health;
             float max = boss.MaxHealth();
@@ -1155,6 +1200,7 @@ namespace Oxide.Plugins
             var id = player.userID;
             CuiHelper.DestroyUi(player, "BeastBossHUD");
             RemoveHud(id);
+            RestoreExternalHud(id);
         }
 
         private void RemoveHud(ulong userId)
