@@ -209,6 +209,10 @@ namespace Oxide.Plugins
 
             public float EventCheckIntervalSeconds = 60f;
 
+            // Enable phase-based scaling (beasts scale as health drops to phases).
+            // If false, only InitialScale and EnragedScale are applied.
+            public bool UsePhaseScaling = false;
+
             // Boss HUD config (roughly compatible look with TargetHealthHUD)
             public UiConfig Ui = new UiConfig();
 
@@ -1364,6 +1368,10 @@ namespace Oxide.Plugins
             private void CheckPhaseScaling()
             {
                 if (_combat == null || _def.PhaseScales == null || _def.PhaseScales.Count == 0)
+                    return;
+
+                // If phase scaling is disabled in config, do nothing.
+                if (!_plugin._config.UsePhaseScaling)
                     return;
 
                 float currentHealth = _combat.health;
