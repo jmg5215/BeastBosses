@@ -1074,18 +1074,29 @@ namespace Oxide.Plugins
             if (entity == null)
                 return;
 
-            // Ignore non-positive or "no change" scales.
-            if (scale <= 0f || Mathf.Approximately(scale, 1f))
+            // Reject non-positive / NaN scales.
+            if (scale <= 0f || float.IsNaN(scale) || float.IsInfinity(scale))
+                return;
+
+            // Keep bosses "modestly huge":
+            //  - MinScale slightly below 1 so minor shrink is possible if desired.
+            //  - MaxScale around 1.75 to avoid navmesh/physics issues and visual jank.
+            const float MinScale = 0.9f;
+            const float MaxScale = 1.75f;
+
+            var clampedScale = Mathf.Clamp(scale, MinScale, MaxScale);
+
+            // If the clamped scale is effectively 1, don't bother changing it.
+            if (Mathf.Approximately(clampedScale, 1f))
                 return;
 
             // Try to use EntityScaleManager API if that plugin is installed.
-            // The hook method is API_ScaleEntity(BaseEntity entity, float scale).
-            var result = Interface.CallHook("API_ScaleEntity", entity, scale);
+            var result = Interface.CallHook("API_ScaleEntity", entity, clampedScale);
             if (result is bool b && b)
                 return;
 
             // Fallback: use native scaling directly.
-            var targetScale = Vector3.one * scale;
+            var targetScale = Vector3.one * clampedScale;
 
             if (entity.transform.localScale == targetScale && entity.networkEntityScale)
                 return;
@@ -1366,7 +1377,11 @@ namespace Oxide.Plugins
                     if (phase == null)
                         continue;
 
-                    // Clamp fraction values just in case.
+                    // Skip phases with obviously invalid or tiny scales.
+                    if (phase.Scale <= 0f || float.IsNaN(phase.Scale) || float.IsInfinity(phase.Scale))
+                        continue;
+
+                    // Clamp threshold to 0–1.
                     var threshold = Mathf.Clamp01(phase.HealthFraction);
 
                     if (fraction <= threshold && !_triggeredPhaseScales.Contains(threshold))
