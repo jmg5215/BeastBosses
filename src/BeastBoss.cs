@@ -28,6 +28,15 @@ namespace Oxide.Plugins
                     Prefab = "assets/rust.ai/agents/bear/bear.prefab",
                     BaseHealth = 2500f,
                     DamageMultiplier = 1.5f,
+                    InitialScale = 1.2f,
+                    EnragedScale = 1.5f,
+
+                    PhaseScales = new List<PhaseScale>
+                    {
+                        new PhaseScale { HealthFraction = 0.75f, Scale = 1.3f },
+                        new PhaseScale { HealthFraction = 0.50f, Scale = 1.4f },
+                        new PhaseScale { HealthFraction = 0.25f, Scale = 1.5f }
+                    },
 
                     AbilityRoar = new RoarSettings
                     {
@@ -37,16 +46,6 @@ namespace Oxide.Plugins
                         Damage = 10f,
                         Bleed = 10f,
                         ScreenShake = 2.0f
-                    },
-
-                    AbilityPounce = new PounceSettings
-                    {
-                        Enabled = true,
-                        Interval = 18f,
-                        Range = 18f,
-                        LeapForce = 10f,
-                        ImpactDamage = 35f,
-                        KnockdownSeconds = 1.5f
                     },
 
                     AbilityCharge = new ChargeSettings
@@ -114,6 +113,14 @@ namespace Oxide.Plugins
                     Prefab = "assets/rust.ai/agents/wolf/wolf.prefab",
                     BaseHealth = 1500f,
                     DamageMultiplier = 1.3f,
+                    InitialScale = 1.1f,
+                    EnragedScale = 1.4f,
+
+                    PhaseScales = new List<PhaseScale>
+                    {
+                        new PhaseScale { HealthFraction = 0.50f, Scale = 1.2f },
+                        new PhaseScale { HealthFraction = 0.25f, Scale = 1.3f }
+                    },
 
                     AbilityRoar = new RoarSettings
                     {
@@ -123,16 +130,6 @@ namespace Oxide.Plugins
                         Damage = 7f,
                         Bleed = 7f,
                         ScreenShake = 1.2f
-                    },
-
-                    AbilityPounce = new PounceSettings
-                    {
-                        Enabled = true,
-                        Interval = 10f,
-                        Range = 22f,
-                        LeapForce = 13f,
-                        ImpactDamage = 22f,
-                        KnockdownSeconds = 1.0f
                     },
 
                     AbilityCharge = new ChargeSettings
@@ -300,9 +297,10 @@ namespace Oxide.Plugins
             public string Prefab;
             public float BaseHealth;
             public float DamageMultiplier;
+            public float InitialScale = 1f;
+            public float EnragedScale = 1f;
 
             public RoarSettings AbilityRoar = new RoarSettings();
-            public PounceSettings AbilityPounce = new PounceSettings();
             public ChargeSettings AbilityCharge = new ChargeSettings();
             public FrostAuraSettings AbilityFrostAura = new FrostAuraSettings();
             public CubSummonSettings AbilityCubSummon = new CubSummonSettings();
@@ -310,6 +308,7 @@ namespace Oxide.Plugins
             public FireTrailSettings AbilityFireTrail = new FireTrailSettings();
 
             public List<LootEntry> Loot = new List<LootEntry>();
+            public List<PhaseScale> PhaseScales = new List<PhaseScale>();
         }
 
         public class RoarSettings
@@ -320,16 +319,6 @@ namespace Oxide.Plugins
             public float Damage;
             public float Bleed;
             public float ScreenShake;
-        }
-
-        public class PounceSettings
-        {
-            public bool Enabled;
-            public float Interval;
-            public float Range;
-            public float LeapForce;
-            public float ImpactDamage;
-            public float KnockdownSeconds;
         }
 
         public class ChargeSettings
@@ -379,6 +368,15 @@ namespace Oxide.Plugins
             public float Step;
             public float Radius;
             public float DamagePerStep;
+        }
+
+        public class PhaseScale
+        {
+            // Health fraction at or below which this phase is triggered (0-1, e.g. 0.75 = 75% HP).
+            public float HealthFraction;
+
+            // Scale to apply when this phase triggers (e.g. 1.1, 1.3, 1.5).
+            public float Scale;
         }
 
         public class LootEntry
@@ -920,6 +918,9 @@ namespace Oxide.Plugins
                 combat.InitializeHealth(def.BaseHealth, def.BaseHealth);
             }
 
+            // Apply initial scale
+            ScaleBeastEntity(entity, def.InitialScale);
+
             var driver = entity.gameObject.AddComponent<BeastComponent>();
             driver.Init(this, entity, def);
 
@@ -1066,6 +1067,32 @@ namespace Oxide.Plugins
             }
 
             return fallback;
+        }
+
+        private void ScaleBeastEntity(BaseEntity entity, float scale)
+        {
+            if (entity == null)
+                return;
+
+            // Ignore non-positive or "no change" scales.
+            if (scale <= 0f || Mathf.Approximately(scale, 1f))
+                return;
+
+            // Try to use EntityScaleManager API if that plugin is installed.
+            // The hook method is API_ScaleEntity(BaseEntity entity, float scale).
+            var result = Interface.CallHook("API_ScaleEntity", entity, scale);
+            if (result is bool b && b)
+                return;
+
+            // Fallback: use native scaling directly.
+            var targetScale = Vector3.one * scale;
+
+            if (entity.transform.localScale == targetScale && entity.networkEntityScale)
+                return;
+
+            entity.transform.localScale = targetScale;
+            entity.networkEntityScale = true;
+            entity.SendNetworkUpdate();
         }
 
         #endregion
@@ -1234,13 +1261,13 @@ namespace Oxide.Plugins
             private BeastDef _def;
 
             private float _nextRoar;
-            private float _nextPounce;
             private float _nextCharge;
             private float _nextFrost;
             private float _nextFireTrail;
 
             private bool _summonedCubs;
             private bool _enraged;
+            private readonly HashSet<float> _triggeredPhaseScales = new HashSet<float>();
 
             public void Init(BeastBoss plugin, BaseEntity entity, BeastDef def)
             {
@@ -1252,7 +1279,6 @@ namespace Oxide.Plugins
 
                 var now = Time.realtimeSinceStartup;
                 _nextRoar = now + UnityEngine.Random.Range(4f, 8f);
-                _nextPounce = now + UnityEngine.Random.Range(6f, 10f);
                 _nextCharge = now + UnityEngine.Random.Range(8f, 12f);
                 _nextFrost = now + UnityEngine.Random.Range(10f, 14f);
                 _nextFireTrail = now + UnityEngine.Random.Range(10f, 16f);
@@ -1292,18 +1318,15 @@ namespace Oxide.Plugins
                         TriggerEnrage();
                         _enraged = true;
                     }
+
+                    // Evaluate health-based phase scaling
+                    CheckPhaseScaling();
                 }
 
                 if (_def.AbilityRoar.Enabled && now >= _nextRoar)
                 {
                     DoRoar();
                     _nextRoar = now + Mathf.Max(5f, _def.AbilityRoar.Interval);
-                }
-
-                if (_def.AbilityPounce.Enabled && now >= _nextPounce)
-                {
-                    DoPounce();
-                    _nextPounce = now + Mathf.Max(6f, _def.AbilityPounce.Interval);
                 }
 
                 if (_def.AbilityCharge.Enabled && now >= _nextCharge)
@@ -1326,6 +1349,33 @@ namespace Oxide.Plugins
             }
 
             #region Abilities
+
+            private void CheckPhaseScaling()
+            {
+                if (_combat == null || _def.PhaseScales == null || _def.PhaseScales.Count == 0)
+                    return;
+
+                float currentHealth = _combat.health;
+                float maxHealth = Mathf.Max(1f, _def.BaseHealth);
+                float fraction = currentHealth / maxHealth;
+
+                // Iterate through configured phases; trigger any whose HealthFraction
+                // is >= fraction and not yet triggered.
+                foreach (var phase in _def.PhaseScales)
+                {
+                    if (phase == null)
+                        continue;
+
+                    // Clamp fraction values just in case.
+                    var threshold = Mathf.Clamp01(phase.HealthFraction);
+
+                    if (fraction <= threshold && !_triggeredPhaseScales.Contains(threshold))
+                    {
+                        _triggeredPhaseScales.Add(threshold);
+                        _plugin.ScaleBeastEntity(_entity, phase.Scale);
+                    }
+                }
+            }
 
             private void DoRoar()
             {
@@ -1351,42 +1401,6 @@ namespace Oxide.Plugins
                     var impactFx = _plugin.GetRandomFx("ground_impact", "assets/bundled/prefabs/fx/impact/impact_concrete.prefab", _def.Theme);
                     Effect.server.Run(impactFx, p.transform.position);
                 }
-            }
-
-            private void DoPounce()
-            {
-                if (_animal == null) return;
-
-                var s = _def.AbilityPounce;
-                var origin = _entity.transform.position;
-
-                BasePlayer target = FindBestTarget(origin, s.Range);
-                if (target == null) return;
-
-                var rb = EnsureRigidbody(_entity);
-                var dir = (target.transform.position + Vector3.up * 0.2f - origin).normalized;
-                rb.velocity = Vector3.zero;
-                rb.AddForce((dir + Vector3.up * 0.35f) * s.LeapForce, ForceMode.VelocityChange);
-
-                _plugin.timer.Once(0.6f, () =>
-                {
-                    if (target == null || !target.IsAlive()) return;
-                    if (_entity == null || _entity.IsDestroyed) return;
-
-                    var dist = Vector3.Distance(_entity.transform.position, target.transform.position);
-                    if (dist <= 2.2f)
-                    {
-                        target.Hurt(s.ImpactDamage, DamageType.Blunt, _entity, useProtection: false);
-                        target.StartSleeping();
-                        _plugin.timer.Once(Mathf.Clamp(s.KnockdownSeconds, 0.5f, 3f), () =>
-                        {
-                            if (target != null && target.IsConnected) target.EndSleeping();
-                        });
-
-                        Effect.server.Run("assets/bundled/prefabs/fx/impact/impact_flesh.prefab", target.transform.position);
-                        _plugin.PrintBossChat($"<color=#ffb700>{_def.DisplayName}</color> pounces on {target.displayName}!");
-                    }
-                });
             }
 
             private void DoCharge()
@@ -1491,6 +1505,9 @@ namespace Oxide.Plugins
                 var s = _def.AbilityEnrage;
 
                 _plugin.ApplyEnrageBuff(_entity, _def);
+
+                // Apply enraged scale if configured.
+                _plugin.ScaleBeastEntity(_entity, _def.EnragedScale);
 
                 var pos = _entity.transform.position + Vector3.up * 0.5f;
 
