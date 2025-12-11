@@ -1079,6 +1079,9 @@ namespace Oxide.Plugins
         {
             if (!_config.Ui.Enabled) return;
 
+            // Hide TargetHealthHUD while fighting a BeastBoss so only our HUD shows.
+            CuiHelper.DestroyUi(player, "TargetHealthHUD");
+
             float current = boss.health;
             float max = boss.MaxHealth();
             if (max <= 0f) max = 1f;
