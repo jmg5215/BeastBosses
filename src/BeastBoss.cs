@@ -500,6 +500,12 @@ namespace Oxide.Plugins
             // Mythic variants: rare boss versions with special FX and loot
             public MythicSettings Mythic = new MythicSettings();
 
+            // Boss title plate (CUI overlay at top-center showing boss name + subtitle)
+            public TitlePlateSettings TitlePlate = new TitlePlateSettings();
+
+            // Enrage countdown indicator shown in title plate
+            public EnrageIndicatorSettings EnrageIndicator = new EnrageIndicatorSettings();
+
             /*
              * FX Library keys and usage:
              *  - "roar_blast"   : Used by DoRoar() for the main roar visual + optional impact FX.
@@ -706,6 +712,63 @@ namespace Oxide.Plugins
             public float LootMultiplier = 1.5f; // multiply amounts; do not change items
         }
 
+        public class TitlePlateSettings
+        {
+            public bool Enabled = true;
+            public float ShowWithinMeters = 120f;
+            public float UpdateIntervalSeconds = 1.0f;
+
+            public string PanelAnchorMin = "0.30 0.93";
+            public string PanelAnchorMax = "0.70 0.99";
+            public string PanelColor = "0.05 0.05 0.05 0.65";
+
+            public int FontSize = 18;
+            public string TextColor = "1 1 1 1";
+            public string OutlineColor = "0 0 0 0.8";
+
+            // Tier-colored border configuration
+            public float BorderThickness = 0.006f; // Anchor units, clamped 0.001-0.05
+            public Dictionary<string, string> TierBorderColors = new Dictionary<string, string>
+            {
+                ["T1"] = "#ffcc00",  // Gold
+                ["T2"] = "#66ccff",  // Cyan
+                ["T3"] = "#cc66ff",  // Magenta
+                ["T4"] = "#ff4444",  // Red
+                ["T5"] = "#ffffff"   // White
+            };
+
+            // Mythic border overrides
+            public string MythicBorderColor = "#ffd700";   // gold
+            public bool MythicBorderOverridesTier = true;  // if true, use mythic color instead of tier color
+            public bool MythicPulseOverrides = true;
+            public float MythicPulseSpeedMultiplier = 1.35f; // pulse slightly faster than normal
+            public float MythicPulseAlphaBoost = 0.08f;       // increases max alpha slightly (still subtle)
+
+            // Title format tokens:
+            // {name} -> boss display name (supports mythic override)
+            // {subtitle} -> generated subtitle based on Theme/TierId
+            public string TitleFormat = "{name}, {subtitle}";
+        }
+
+        public class EnrageIndicatorSettings
+        {
+            public bool Enabled = true;
+            public string TextColor = "1 0.2 0.2 1";
+            public int FontSize = 14;
+
+            // position within TitlePlate panel
+            public string AnchorMin = "0 0.05";
+            public string AnchorMax = "1 0.45";
+            public string Format = "ENRAGED: {seconds}s";
+
+            // Pulsing effect on title plate when enraged
+            public bool PulseTitlePlate = true;
+            public float PulseMinAlpha = 0.45f;
+            public float PulseMaxAlpha = 0.75f;
+            public float PulseSpeed = 2.0f; // higher = faster pulse
+            public bool PulseBorder = true;
+        }
+
         public class TierConfig
         {
             public string DisplayName;
@@ -910,6 +973,11 @@ namespace Oxide.Plugins
         private readonly Dictionary<uint, string> _runtimeBossName = new Dictionary<uint, string>();
         private readonly Dictionary<uint, string> _runtimeBossTheme = new Dictionary<uint, string>();
 
+        // Title plate (CUI overlay) timer
+        private Timer _titlePlateTimer;
+
+        private const string TitlePlateUi = "BeastBoss_TitlePlateUI";
+
         private void LoadData()
         {
             try
@@ -950,6 +1018,10 @@ namespace Oxide.Plugins
             if (_markerUpdateTimer == null && _config.Markers.Enabled)
                 _markerUpdateTimer = timer.Every(Mathf.Max(1f, _config.Markers.UpdateIntervalSeconds), UpdateBossMarkers);
 
+            // Start title plate update timer
+            if (_titlePlateTimer == null && _config.TitlePlate.Enabled)
+                _titlePlateTimer = timer.Every(Mathf.Max(0.5f, _config.TitlePlate.UpdateIntervalSeconds), UpdateTitlePlates);
+
             // Schedule world events
             if (_config.WorldEvents.Enabled)
                 ScheduleNextWorldEvent();
@@ -973,6 +1045,7 @@ namespace Oxide.Plugins
             foreach (var player in BasePlayer.activePlayerList)
             {
                 RemoveHud(player);
+                DestroyTitlePlate(player);
             }
 
             _bosses.Clear();
@@ -991,6 +1064,12 @@ namespace Oxide.Plugins
             {
                 _markerUpdateTimer.Destroy();
                 _markerUpdateTimer = null;
+            }
+
+            if (_titlePlateTimer != null)
+            {
+                _titlePlateTimer.Destroy();
+                _titlePlateTimer = null;
             }
 
             if (_worldEventTimer != null)
@@ -1361,6 +1440,12 @@ namespace Oxide.Plugins
             ClearHudForBoss(entity);
 
             SaveData();
+        }
+
+        private void OnPlayerDisconnected(BasePlayer player, string reason)
+        {
+            if (player == null) return;
+            DestroyTitlePlate(player);
         }
 
         #endregion
@@ -1848,12 +1933,109 @@ namespace Oxide.Plugins
             }
         }
 
+        private void UpdateTitlePlates()
+        {
+            if (_config == null || !_config.TitlePlate.Enabled) return;
+
+            foreach (var player in BasePlayer.activePlayerList)
+            {
+                if (player == null || !player.IsConnected) continue;
+
+                if (TryGetNearestBossForPlayer(player, out var boss, out var def))
+                {
+                    var title = BuildTitle(def, boss);
+                    var bossId = boss.net?.ID.Value ?? 0u;
+
+                    // Compute enrage countdown and pulse flag if applicable
+                    string enrageText = null;
+                    bool enraged = false;
+                    if (_config.EnrageIndicator.Enabled && boss?.net != null)
+                    {
+                        // Get the BeastComponent to check enrage status
+                        if (_bossComponents.TryGetValue(boss.net.ID.Value, out var comp) && comp != null)
+                        {
+                            if (comp.IsEnraged && comp.EnrageSecondsRemaining > 0f)
+                            {
+                                enraged = true;
+                                int seconds = Mathf.CeilToInt(comp.EnrageSecondsRemaining);
+                                enrageText = _config.EnrageIndicator.Format.Replace("{seconds}", seconds.ToString());
+                            }
+                        }
+                    }
+
+                    DrawTitlePlate(player, bossId, def, title, enrageText, enraged);
+                }
+                else
+                {
+                    DestroyTitlePlate(player);
+                }
+            }
+        }
+
         private Color ParseColor(string hex)
         {
             if (string.IsNullOrEmpty(hex)) return Color.red;
             Color c;
             if (ColorUtility.TryParseHtmlString(hex, out c)) return c;
             return Color.red;
+        }
+
+        private bool IsMythicBoss(uint id)
+        {
+            return _mythicBossIds != null && _mythicBossIds.Contains(id);
+        }
+
+        private string GetTierBorderHex(BeastDef def)
+        {
+            if (def == null || string.IsNullOrEmpty(def.TierId)) return "#ffffff";
+            string hex;
+            if (_config.TitlePlate.TierBorderColors.TryGetValue(def.TierId, out hex))
+                return hex;
+            return "#ffffff"; // Default fallback
+        }
+
+        private string GetBorderHex(BeastDef def, uint id)
+        {
+            if (_config?.TitlePlate == null) return "#ffffff";
+
+            bool mythic = IsMythicBoss(id);
+            if (mythic && _config.TitlePlate.MythicBorderOverridesTier && !string.IsNullOrEmpty(_config.TitlePlate.MythicBorderColor))
+                return _config.TitlePlate.MythicBorderColor;
+
+            // Fall back to tier mapping
+            return GetTierBorderHex(def);
+        }
+
+        private string ToCuiColor(Color c)
+        {
+            return $"{c.r} {c.g} {c.b} {c.a}";
+        }
+
+        private float GetPulseAlpha(bool mythic = false)
+        {
+            float speed = Mathf.Max(0.1f, _config.EnrageIndicator.PulseSpeed);
+            float minA = _config.EnrageIndicator.PulseMinAlpha;
+            float maxA = _config.EnrageIndicator.PulseMaxAlpha;
+
+            if (mythic && _config.TitlePlate.MythicPulseOverrides)
+            {
+                speed *= Mathf.Max(1f, _config.TitlePlate.MythicPulseSpeedMultiplier);
+                maxA = Mathf.Clamp01(maxA + Mathf.Max(0f, _config.TitlePlate.MythicPulseAlphaBoost));
+            }
+
+            var t = Time.realtimeSinceStartup * speed;
+            var s = (Mathf.Sin(t) + 1f) * 0.5f;
+            return Mathf.Lerp(minA, maxA, s);
+        }
+
+        private string WithAlpha(string rgba, float alpha)
+        {
+            if (string.IsNullOrEmpty(rgba)) return $"0 0 0 {alpha:0.###}";
+            var parts = rgba.Split(' ');
+            if (parts.Length < 4) return rgba;
+
+            // Keep RGB, replace A
+            return $"{parts[0]} {parts[1]} {parts[2]} {alpha:0.###}";
         }
 
         private bool IsBossOutsideLeash(BaseEntity boss, Vector3 spawnPos)
@@ -1989,6 +2171,42 @@ namespace Oxide.Plugins
                 // Fallback: if RequireBadWeather is false, allow procs anyway; otherwise deny
                 return !_config.WeatherProcs.RequireBadWeather;
             }
+        }
+
+        private bool TryGetNearestBossForPlayer(BasePlayer player, out BaseEntity boss, out BeastDef def)
+        {
+            boss = null;
+            def = null;
+
+            if (player == null) return false;
+            if (_bossComponents == null || _bossComponents.Count == 0) return false;
+
+            float maxDist = Mathf.Max(5f, _config.TitlePlate.ShowWithinMeters);
+            float maxDistSqr = maxDist * maxDist;
+
+            float best = float.MaxValue;
+
+            foreach (var kvp in _bossComponents)
+            {
+                var comp = kvp.Value;
+                if (comp == null) continue;
+
+                var e = comp.Entity;
+                if (e == null || e.IsDestroyed) continue;
+
+                var d = comp.Def;
+                if (d == null) continue;
+
+                float ds = (player.transform.position - e.transform.position).sqrMagnitude;
+                if (ds <= maxDistSqr && ds < best)
+                {
+                    best = ds;
+                    boss = e;
+                    def = d;
+                }
+            }
+
+            return boss != null && def != null;
         }
 
         private void DoLightningProc(BaseEntity boss, BasePlayer target, float damage, float radius, string theme = "storm")
@@ -2314,6 +2532,132 @@ namespace Oxide.Plugins
             if (_runtimeBossTheme.TryGetValue(id, out var theme) && !string.IsNullOrEmpty(theme))
                 return theme;
             return fallbackTheme;
+        }
+
+        private string GetBossSubtitle(BeastDef def, uint id)
+        {
+            // Use runtime theme override if mythic has theme override
+            var theme = GetBossTheme(id, def.Theme);
+            switch (theme)
+            {
+                case "frost": return "the Frozen Alpha";
+                case "fire": return "the Burning Tyrant";
+                case "storm": return "the Storm Herald";
+                case "toxic": return "the Plaguebringer";
+                case "shadow": return "the Dread Stalker";
+                default: return "the Alpha";
+            }
+        }
+
+        private string BuildTitle(BeastDef def, BaseEntity boss)
+        {
+            var id = boss?.net?.ID.Value ?? 0u;
+            var name = boss != null ? GetBossDisplayName(id, def.DisplayName) : def.DisplayName;
+            var subtitle = GetBossSubtitle(def, id);
+            return (_config.TitlePlate.TitleFormat ?? "{name}, {subtitle}")
+                .Replace("{name}", name)
+                .Replace("{subtitle}", subtitle);
+        }
+
+        private void DestroyTitlePlate(BasePlayer player)
+        {
+            if (player == null) return;
+            CuiHelper.DestroyUi(player, TitlePlateUi);
+        }
+
+        private void DrawTitlePlate(BasePlayer player, uint bossId, BeastDef def, string titleText, string enrageTextOrNull = null, bool pulse = false)
+        {
+            if (player == null || !player.IsConnected) return;
+
+            var container = new CuiElementContainer();
+
+            // Determine if this is a mythic boss
+            bool mythic = IsMythicBoss(bossId);
+
+            // Main panel background with optional pulsing alpha
+            var panelColor = _config.TitlePlate.PanelColor;
+            if (pulse && _config.EnrageIndicator.Enabled && _config.EnrageIndicator.PulseTitlePlate)
+                panelColor = WithAlpha(panelColor, GetPulseAlpha(mythic));
+
+            container.Add(new CuiPanel
+            {
+                Image = { Color = panelColor },
+                RectTransform = { AnchorMin = _config.TitlePlate.PanelAnchorMin, AnchorMax = _config.TitlePlate.PanelAnchorMax },
+                CursorEnabled = false
+            }, "Overlay", TitlePlateUi);
+
+            // Tier-colored border panels (if BorderThickness > 0)
+            if (_config.TitlePlate.BorderThickness > 0f)
+            {
+                var borderHex = GetBorderHex(def, bossId);
+                var bc = ParseColor(borderHex);
+
+                // Apply pulse to border if enraged
+                if (pulse && _config.EnrageIndicator.Enabled && _config.EnrageIndicator.PulseBorder)
+                    bc.a = GetPulseAlpha(mythic);
+                else
+                    bc.a = 1f;
+
+                var borderColor = ToCuiColor(bc);
+                var t = Mathf.Clamp(_config.TitlePlate.BorderThickness, 0.001f, 0.05f).ToString("F4");
+
+                // Top border
+                container.Add(new CuiPanel
+                {
+                    Image = { Color = borderColor },
+                    RectTransform = { AnchorMin = "0 " + (1f - float.Parse(t)).ToString("F4"), AnchorMax = "1 1" },
+                    CursorEnabled = false
+                }, TitlePlateUi);
+
+                // Bottom border
+                container.Add(new CuiPanel
+                {
+                    Image = { Color = borderColor },
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = "1 " + t },
+                    CursorEnabled = false
+                }, TitlePlateUi);
+
+                // Left border
+                container.Add(new CuiPanel
+                {
+                    Image = { Color = borderColor },
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = t + " 1" },
+                    CursorEnabled = false
+                }, TitlePlateUi);
+
+                // Right border
+                container.Add(new CuiPanel
+                {
+                    Image = { Color = borderColor },
+                    RectTransform = { AnchorMin = (1f - float.Parse(t)).ToString("F4") + " 0", AnchorMax = "1 1" },
+                    CursorEnabled = false
+                }, TitlePlateUi);
+            }
+
+            // Optional outline using two labels offset (simple + compatible)
+            container.Add(new CuiLabel
+            {
+                Text = { Text = titleText, FontSize = _config.TitlePlate.FontSize, Align = TextAnchor.MiddleCenter, Color = _config.TitlePlate.OutlineColor },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "1 -1", OffsetMax = "1 -1" }
+            }, TitlePlateUi);
+
+            container.Add(new CuiLabel
+            {
+                Text = { Text = titleText, FontSize = _config.TitlePlate.FontSize, Align = TextAnchor.MiddleCenter, Color = _config.TitlePlate.TextColor },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
+            }, TitlePlateUi);
+
+            // Optional enrage countdown indicator
+            if (!string.IsNullOrEmpty(enrageTextOrNull) && _config.EnrageIndicator.Enabled)
+            {
+                container.Add(new CuiLabel
+                {
+                    Text = { Text = enrageTextOrNull, FontSize = _config.EnrageIndicator.FontSize, Align = TextAnchor.MiddleCenter, Color = _config.EnrageIndicator.TextColor },
+                    RectTransform = { AnchorMin = _config.EnrageIndicator.AnchorMin, AnchorMax = _config.EnrageIndicator.AnchorMax }
+                }, TitlePlateUi);
+            }
+
+            CuiHelper.AddUi(player, container);
         }
 
         private void ApplyMythicVariantIfRolled(BaseEntity boss, BeastDef def, Vector3 pos)
@@ -2763,6 +3107,9 @@ namespace Oxide.Plugins
             private bool _summonedCubs;
             private bool _enraged;
 
+            // Enrage timing (for countdown display)
+            private float _enrageEndsAt;
+
             // Weather proc tracking
             private float _nextWeatherProcCheck;
 
@@ -2779,6 +3126,16 @@ namespace Oxide.Plugins
             public BaseEntity Entity => _entity;
             public BeastDef Def => _def;
             public bool IsReturning => _isReturning;
+            public bool IsEnraged => _enraged;
+            public float EnrageSecondsRemaining
+            {
+                get
+                {
+                    if (!_enraged) return 0f;
+                    var rem = _enrageEndsAt - Time.realtimeSinceStartup;
+                    return rem > 0f ? rem : 0f;
+                }
+            }
 
             public void Init(BeastBoss plugin, BaseEntity entity, BeastDef def)
             {
@@ -2796,6 +3153,10 @@ namespace Oxide.Plugins
                 _isReturning = false;
                 _returnStartedAt = 0f;
                 _nextReturnDestAt = 0f;
+
+                // Initialize enrage timing
+                _enraged = false;
+                _enrageEndsAt = 0f;
 
                 // Ensure flee behavior is disabled even if something resets stats later.
                 _plugin.DisableFleeForBoss(entity);
@@ -2831,6 +3192,13 @@ namespace Oxide.Plugins
                 {
                     CancelInvoke(nameof(Tick));
                     return;
+                }
+
+                // Check if enrage duration has expired
+                if (_enraged && Time.realtimeSinceStartup >= _enrageEndsAt)
+                {
+                    _enraged = false;
+                    _enrageEndsAt = 0f;
                 }
 
                 // Return-to-spawn state machine (if enabled)
@@ -3198,6 +3566,12 @@ namespace Oxide.Plugins
                         _plugin.Dbg($"Mythic enrage FX triggered for boss id={_entity.net.ID}");
                     }
                 }
+
+                // Track enrage timing for countdown display
+                _enraged = true;
+                float dur = 0f;
+                try { dur = _def.AbilityEnrage != null ? _def.AbilityEnrage.Duration : 0f; } catch { dur = 0f; }
+                _enrageEndsAt = Time.realtimeSinceStartup + Mathf.Max(0f, dur);
 
                 _plugin.PrintBossChat($"<color=#ff0000>{_def.DisplayName}</color> becomes enraged!");
             }
