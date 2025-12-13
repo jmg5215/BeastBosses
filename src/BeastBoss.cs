@@ -228,6 +228,7 @@ namespace Oxide.Plugins
              *  - "toxic_aura"   : Optional alternative to frost_aura for poison-themed beasts.
              *  - "ground_impact": Used by DoRoar() and other impact-style abilities for ground shock FX.
              *  - "enrage_burst" : Used by TriggerEnrage() for the enrage burst visual.
+             *  - "enrage_aura"  : Used by TriggerEnrage() for the repeating aura during enrage.
              *  - "summon_burst" : Used by DoCubSummon() when spawning minions.
              *
              * These keys are defined in ConfigData.FxLibrary and can be customized in BeastBoss.json
@@ -264,6 +265,12 @@ namespace Oxide.Plugins
                 {
                     "assets/bundled/prefabs/fx/gestures/flex.prefab",
                     "assets/bundled/prefabs/fireball_small.prefab"
+                },
+                ["enrage_aura"] = new List<string>
+                {
+                    "assets/bundled/prefabs/fireball_small.prefab",
+                    "assets/content/effects/prefabs/hot_spot_fire.prefab",
+                    "assets/bundled/prefabs/fx/dustwave.prefab"
                 },
                 ["summon_burst"] = new List<string>
                 {
@@ -366,6 +373,7 @@ namespace Oxide.Plugins
             public float DamageMultiplier;
             public float SpeedMultiplier;
             public string EffectPrefab;
+            public float Duration = 10f;  // Duration of enrage effect in seconds
         }
 
         public class FireTrailSettings
@@ -926,9 +934,6 @@ namespace Oxide.Plugins
                 combat.InitializeHealth(def.BaseHealth, def.BaseHealth);
             }
 
-            // Apply initial scale
-            ScaleBeastEntity(entity, def.InitialScale);
-
             var driver = entity.gameObject.AddComponent<BeastComponent>();
             driver.Init(this, entity, def);
 
@@ -1079,43 +1084,8 @@ namespace Oxide.Plugins
 
         private void ScaleBeastEntity(BaseEntity entity, float scale)
         {
-            if (entity == null)
-                return;
-
-            // Global kill-switch: if scaling is disabled in config, do nothing.
-            if (!_config.UseScaling)
-                return;
-
-            // Reject non-positive / NaN / Infinity scale values.
-            if (scale <= 0f || float.IsNaN(scale) || float.IsInfinity(scale))
-                return;
-
-            // Keep bosses "modestly huge":
-            //  - MinScale slightly below 1 so minor shrink is possible if desired.
-            //  - MaxScale around 1.75 to avoid navmesh/physics issues and visual jank.
-            const float MinScale = 0.9f;
-            const float MaxScale = 1.75f;
-
-            var clampedScale = Mathf.Clamp(scale, MinScale, MaxScale);
-
-            // If the clamped scale is effectively 1, don't bother changing it.
-            if (Mathf.Approximately(clampedScale, 1f))
-                return;
-
-            // Only use EntityScaleManager. If it is not installed or refuses the
-            // scale, we do not try to scale manually.
-            var result = Interface.CallHook("API_ScaleEntity", entity, clampedScale);
-
-            // API_ScaleEntity returns a bool indicating success when present.
-            // If the hook is missing or returns something else, we just ignore it.
-            if (result is bool b && b)
-            {
-                // Successfully scaled via EntityScaleManager.
-                return;
-            }
-
-            // If EntityScaleManager is not present or did not handle the scale,
-            // bail out. Do NOT touch transform.localScale directly.
+            // Entity scaling is currently disabled; this is left as a no-op
+            // so the method can be reused in the future if scaling is reintroduced.
         }
 
         #endregion
@@ -1290,7 +1260,6 @@ namespace Oxide.Plugins
 
             private bool _summonedCubs;
             private bool _enraged;
-            private readonly HashSet<float> _triggeredPhaseScales = new HashSet<float>();
 
             public void Init(BeastBoss plugin, BaseEntity entity, BeastDef def)
             {
@@ -1375,37 +1344,34 @@ namespace Oxide.Plugins
 
             private void CheckPhaseScaling()
             {
-                if (_combat == null || _def.PhaseScales == null || _def.PhaseScales.Count == 0)
+                // Phase-based scaling is disabled; this method is kept as a stub
+                // so it can be re-enabled in the future if needed.
+                return;
+            }
+
+            private void StartEnrageAura(float duration)
+            {
+                if (duration <= 0f)
                     return;
 
-                // If phase scaling is disabled in config, do nothing.
-                if (!_plugin._config.UsePhaseScaling)
-                    return;
+                // How often to pulse the aura FX while enraged.
+                const float Interval = 1.0f;
+                int ticks = Mathf.Max(1, Mathf.RoundToInt(duration / Interval));
 
-                float currentHealth = _combat.health;
-                float maxHealth = Mathf.Max(1f, _def.BaseHealth);
-                float fraction = currentHealth / maxHealth;
-
-                // Iterate through configured phases; trigger any whose HealthFraction
-                // is >= fraction and not yet triggered.
-                foreach (var phase in _def.PhaseScales)
+                _plugin.timer.Repeat(Interval, ticks, () =>
                 {
-                    if (phase == null)
-                        continue;
+                    if (_entity == null || _entity.IsDestroyed)
+                        return;
 
-                    // Skip phases with obviously invalid or tiny scales.
-                    if (phase.Scale <= 0f || float.IsNaN(phase.Scale) || float.IsInfinity(phase.Scale))
-                        continue;
+                    var pos = _entity.transform.position + Vector3.up * 0.25f;
 
-                    // Clamp threshold to 0–1.
-                    var threshold = Mathf.Clamp01(phase.HealthFraction);
-
-                    if (fraction <= threshold && !_triggeredPhaseScales.Contains(threshold))
+                    // Use themed enrage aura if available, otherwise generic.
+                    var auraFx = _plugin.GetRandomFx("enrage_aura", null, _def.Theme);
+                    if (!string.IsNullOrEmpty(auraFx))
                     {
-                        _triggeredPhaseScales.Add(threshold);
-                        _plugin.ScaleBeastEntity(_entity, phase.Scale);
+                        Effect.server.Run(auraFx, pos);
                     }
-                }
+                });
             }
 
             private void DoRoar()
@@ -1537,8 +1503,8 @@ namespace Oxide.Plugins
 
                 _plugin.ApplyEnrageBuff(_entity, _def);
 
-                // Apply enraged scale if configured.
-                _plugin.ScaleBeastEntity(_entity, _def.EnragedScale);
+                // Start visual enrage aura for the duration of the enrage effect.
+                StartEnrageAura(s.Duration);
 
                 var pos = _entity.transform.position + Vector3.up * 0.5f;
 
