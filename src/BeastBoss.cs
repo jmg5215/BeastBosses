@@ -1316,9 +1316,9 @@ namespace Oxide.Plugins
             }
 
             // Use runtime display name (includes mythic variant names)
-            var deathDisplayName = GetBossDisplayName(id, def.DisplayName);
+            var deathDisplayName = GetBossDisplayName(bossId, def.DisplayName);
             AnnounceNearby(entity.transform.position, $"{deathDisplayName} has been slain!");
-            DropConfiguredLoot(id, entity.transform.position, def);
+            DropConfiguredLoot(bossId, entity.transform.position, def);
 
             if (!string.IsNullOrEmpty(tierId))
             {
