@@ -1984,16 +1984,22 @@ namespace Oxide.Plugins
 
             try
             {
-                var idObj = ent.net.ID; // could be uint OR NetworkableId
-                if (idObj is uint u) return u;
+                // ent.net.ID may be NetworkableId (newer builds) or uint (older builds).
+                // Avoid pattern matching; use reflection on the returned value.
+                var idObj = (object)ent.net.ID;
 
-                // If it's a struct like NetworkableId, try to read property "Value"
                 var t = idObj.GetType();
+
+                // If it's already a uint, return it
+                if (t == typeof(uint))
+                    return (uint)idObj;
+
+                // If it is NetworkableId, read its Value (uint)
                 var p = t.GetProperty("Value", BindingFlags.Instance | BindingFlags.Public);
                 if (p != null && p.PropertyType == typeof(uint))
                     return (uint)p.GetValue(idObj, null);
 
-                // fallback: try ToString parse (last resort)
+                // Last resort: try parse
                 uint parsed;
                 if (uint.TryParse(idObj.ToString(), out parsed)) return parsed;
             }
@@ -2008,16 +2014,22 @@ namespace Oxide.Plugins
 
             try
             {
-                var idObj = net.net.ID; // could be uint OR NetworkableId
-                if (idObj is uint u) return u;
+                // net.net.ID may be NetworkableId (newer builds) or uint (older builds).
+                // Avoid pattern matching; use reflection on the returned value.
+                var idObj = (object)net.net.ID;
 
-                // If it's a struct like NetworkableId, try to read property "Value"
                 var t = idObj.GetType();
+
+                // If it's already a uint, return it
+                if (t == typeof(uint))
+                    return (uint)idObj;
+
+                // If it is NetworkableId, read its Value (uint)
                 var p = t.GetProperty("Value", BindingFlags.Instance | BindingFlags.Public);
                 if (p != null && p.PropertyType == typeof(uint))
                     return (uint)p.GetValue(idObj, null);
 
-                // fallback: try ToString parse (last resort)
+                // Last resort: try parse
                 uint parsed;
                 if (uint.TryParse(idObj.ToString(), out parsed)) return parsed;
             }
