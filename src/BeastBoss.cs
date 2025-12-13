@@ -1807,7 +1807,7 @@ namespace Oxide.Plugins
                     {
                         // Use runtime display name (includes mythic variant names)
                         var displayName = GetBossDisplayName(NetId(boss), def.DisplayName);
-                        radiusMarker.SetLabel(displayName);
+                        TrySetMarkerLabel(radiusMarker, displayName);
                     }
                     radiusMarker.SendUpdate();
                 }
@@ -1827,6 +1827,57 @@ namespace Oxide.Plugins
             {
                 _bossMarkers.Remove(bossId);
                 if (marker != null && !marker.IsDestroyed) marker.Kill();
+            }
+        }
+
+        private void TrySetMarkerLabel(BaseEntity markerEntity, string label)
+        {
+            if (markerEntity == null || string.IsNullOrEmpty(label)) return;
+
+            try
+            {
+                // Try common string field/property names used on marker components.
+                var t = markerEntity.GetType();
+
+                // 1) property: "markerName"
+                var p1 = t.GetProperty("markerName", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (p1 != null && p1.PropertyType == typeof(string) && p1.CanWrite)
+                {
+                    p1.SetValue(markerEntity, label, null);
+                    markerEntity.SendNetworkUpdate();
+                    return;
+                }
+
+                // 2) field: "markerName"
+                var f1 = t.GetField("markerName", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (f1 != null && f1.FieldType == typeof(string))
+                {
+                    f1.SetValue(markerEntity, label);
+                    markerEntity.SendNetworkUpdate();
+                    return;
+                }
+
+                // 3) property: "text"
+                var p2 = t.GetProperty("text", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (p2 != null && p2.PropertyType == typeof(string) && p2.CanWrite)
+                {
+                    p2.SetValue(markerEntity, label, null);
+                    markerEntity.SendNetworkUpdate();
+                    return;
+                }
+
+                // 4) method: SetLabel(string) if it exists in other builds
+                var mi = t.GetMethod("SetLabel", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new[] { typeof(string) }, null);
+                if (mi != null)
+                {
+                    mi.Invoke(markerEntity, new object[] { label });
+                    markerEntity.SendNetworkUpdate();
+                    return;
+                }
+            }
+            catch
+            {
+                // ignore, label is optional
             }
         }
 
