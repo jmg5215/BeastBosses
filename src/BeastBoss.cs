@@ -1546,6 +1546,9 @@ namespace Oxide.Plugins
                     child.enableSaving = false;
                     child.Spawn();
 
+                    // Ensure summoned helpers never flee
+                    _plugin.DisableFleeForBoss(child);
+
                     var childCombat = child as BaseCombatEntity;
                     if (childCombat != null)
                     {
