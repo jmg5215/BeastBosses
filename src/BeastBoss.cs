@@ -1339,15 +1339,15 @@ namespace Oxide.Plugins
             }
 
             _damageMeter.Clear();
-            _beastDefs.Remove(id);
-            _bossDamageMultipliers.Remove(id);
-            _bossComponents.Remove(id);  // Clean up component tracking
+            _beastDefs.Remove(bossId);
+            _bossDamageMultipliers.Remove(bossId);
+            _bossComponents.Remove(bossId);  // Clean up component tracking
 
-            if (_bossMarkers.TryGetValue(id, out var marker) && marker != null && !marker.IsDestroyed)
+            if (_bossMarkers.TryGetValue(bossId, out var marker) && marker != null && !marker.IsDestroyed)
             {
                 marker.Kill();
             }
-            _bossMarkers.Remove(id);
+            _bossMarkers.Remove(bossId);
             _bossTierById.Remove(id);
 
             // Clear HUD for any players tracking this boss
