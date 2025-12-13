@@ -1965,13 +1965,13 @@ namespace Oxide.Plugins
         private uint NetId(BaseEntity ent)
         {
             if (ent == null || ent.net == null) return 0u;
-            try { return ent.net.ID.Value; } catch { try { return (uint)ent.net.ID; } catch { return 0u; } }
+            try { return (uint)ent.net.ID.Value; } catch { try { return (uint)ent.net.ID; } catch { return 0u; } }
         }
 
         private uint NetId(BaseNetworkable net)
         {
             if (net == null || net.net == null) return 0u;
-            try { return net.net.ID.Value; } catch { try { return (uint)net.net.ID; } catch { return 0u; } }
+            try { return (uint)net.net.ID.Value; } catch { try { return (uint)net.net.ID; } catch { return 0u; } }
         }
         // ==================== END NETWORK ID HELPERS ====================
 
