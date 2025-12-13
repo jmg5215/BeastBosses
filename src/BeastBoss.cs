@@ -1232,8 +1232,8 @@ namespace Oxide.Plugins
             _bosses.Remove(entity);
 
             BeastDef def;
-            uint id = NetId(entity);
-            if (!_beastDefs.TryGetValue(id, out def)) return;
+            uint bossId = NetId(entity);
+            if (!_beastDefs.TryGetValue(bossId, out def)) return;
 
             string tierId = def.TierId;
             var now = Interface.Oxide.Now;
