@@ -1682,7 +1682,34 @@ namespace Oxide.Plugins
         {
             try
             {
-                return PhoneController.PositionToGridCoord(pos);
+                // Try PhoneController method first (newer Rust builds)
+                var method = typeof(PhoneController).GetMethod("PositionToGridCoord", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                if (method != null)
+                {
+                    return (string)method.Invoke(null, new object[] { pos });
+                }
+            }
+            catch { }
+
+            // Fallback: manual grid calculation (if PhoneController method unavailable)
+            try
+            {
+                // Standard Rust grid is ~150x150m per cell
+                const float gridSize = 150f;
+                int gridX = Mathf.FloorToInt(pos.x / gridSize);
+                int gridZ = Mathf.FloorToInt(pos.z / gridSize);
+                
+                // Convert to letters (A-Z, AA-ZZ, etc.)
+                string letter = "";
+                int num = gridX;
+                while (num >= 0)
+                {
+                    letter = (char)('A' + (num % 26)) + letter;
+                    num = num / 26 - 1;
+                    if (num < 0) break;
+                }
+                
+                return letter + (gridZ + 1);
             }
             catch
             {
