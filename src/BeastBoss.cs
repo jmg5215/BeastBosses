@@ -494,8 +494,8 @@ namespace Oxide.Plugins
             // Timed world events that spawn bosses automatically
             public WorldEventSettings WorldEvents = new WorldEventSettings();
 
-            // Tier escalation: progress through tiers based on kill counts
-            public TierEscalationSettings TierEscalation = new TierEscalationSettings();
+            // Per-player tier escalation: each player progresses through tiers based on their kill counts
+            public PlayerTierEscalationSettings TierEscalation = new PlayerTierEscalationSettings();
 
             // Mythic variants: rare boss versions with special FX and loot
             public MythicSettings Mythic = new MythicSettings();
@@ -679,21 +679,33 @@ namespace Oxide.Plugins
             public List<string> AllowedBeastKeys = new List<string>(); // empty => all
         }
 
-        public class TierEscalationSettings
+        public class PlayerTierEscalationSettings
         {
-            public bool Enabled = false;
-            public List<TierRule> Rules = new List<TierRule>
+            public bool Enabled = true;
+            public float ResetAfterHours = 0f; // 0 = disabled
+            public bool CycleEnabled = false;
+            public string CycleAtTierId = "T3";
+            public string CycleToTierId = "T1";
+            public List<PlayerTierRule> Rules = new List<PlayerTierRule>
             {
-                new TierRule { FromTierId = "T1", KillsToEscalate = 10, ToTierId = "T2" },
-                new TierRule { FromTierId = "T2", KillsToEscalate = 10, ToTierId = "T3" }
+                new PlayerTierRule { FromTierId = "T1", KillsToAdvance = 10, ToTierId = "T2" },
+                new PlayerTierRule { FromTierId = "T2", KillsToAdvance = 10, ToTierId = "T3" }
             };
+            public bool KillerOnly = true;
         }
 
-        public class TierRule
+        public class PlayerTierRule
         {
             public string FromTierId;
-            public int KillsToEscalate;
+            public int KillsToAdvance;
             public string ToTierId;
+        }
+
+        public class PlayerTierProgress
+        {
+            public string CurrentTierId = "T1";
+            public Dictionary<string, int> KillsByTier = new Dictionary<string, int>();
+            public double LastProgressUtc = 0;
         }
 
         public class MythicSettings
@@ -931,8 +943,9 @@ namespace Oxide.Plugins
             public Dictionary<string, Dictionary<ulong, double>> TierLockouts =
                 new Dictionary<string, Dictionary<ulong, double>>();
 
-            public Dictionary<string, int> TierKills =
-                new Dictionary<string, int>(); // Track kills per tier for escalation
+            // Per-player tier progression (replaces global TierKills)
+            public Dictionary<ulong, PlayerTierProgress> PlayerProgress =
+                new Dictionary<ulong, PlayerTierProgress>();
         }
 
         private StoredData _data;
@@ -995,8 +1008,8 @@ namespace Oxide.Plugins
                 _data.Spawnpoints = new Dictionary<string, List<SpawnPoint>>();
             if (_data.TierLockouts == null)
                 _data.TierLockouts = new Dictionary<string, Dictionary<ulong, double>>();
-            if (_data.TierKills == null)
-                _data.TierKills = new Dictionary<string, int>();
+            if (_data.PlayerProgress == null)
+                _data.PlayerProgress = new Dictionary<ulong, PlayerTierProgress>();
         }
 
         private void SaveData()
@@ -1135,130 +1148,9 @@ namespace Oxide.Plugins
             }
         }
 
-        private void ScheduleNextWorldEvent()
-        {
-            if (!_config.WorldEvents.Enabled) return;
-
-            var mins = UnityEngine.Random.Range(_config.WorldEvents.MinMinutesBetweenEvents, _config.WorldEvents.MaxMinutesBetweenEvents);
-            _worldEventTimer?.Destroy();
-            _worldEventTimer = timer.Once(mins * 60f, () =>
-            {
-                TryRunWorldEvent();
-                ScheduleNextWorldEvent();
-            });
-
-            Dbg($"World event scheduled for {mins} minutes from now");
-        }
-
-        private string DetermineTierForEscalation()
-        {
-            if (!_config.TierEscalation.Enabled)
-                return null;
-
-            // Check escalation rules in order
-            foreach (var rule in _config.TierEscalation.Rules)
-            {
-                if (!_data.TierKills.TryGetValue(rule.FromTierId, out int kills))
-                    kills = 0;
-
-                if (kills >= rule.KillsToEscalate)
-                    return rule.ToTierId;
-            }
-
-            return null;
-        }
-
         private string GetMythicDisplayName(BeastDef def)
         {
             return _config.Mythic.NamePrefix + def.DisplayName + _config.Mythic.NameSuffix;
-        }
-
-        private void TryRunWorldEvent()
-        {
-            if (!_config.WorldEvents.Enabled) return;
-
-            // Select a beast to spawn
-            List<string> allowedKeys;
-            
-            // Check for tier escalation
-            var escalatedTierId = DetermineTierForEscalation();
-            if (!string.IsNullOrEmpty(escalatedTierId))
-            {
-                // Use escalated tier
-                allowedKeys = _config.Beasts.Values
-                    .Where(b => string.Equals(b.TierId, escalatedTierId, StringComparison.OrdinalIgnoreCase))
-                    .Select(b => _config.Beasts.FirstOrDefault(kvp => kvp.Value == b).Key)
-                    .Where(k => !string.IsNullOrEmpty(k))
-                    .ToList();
-                
-                Dbg($"World event using escalated tier: {escalatedTierId}");
-            }
-            else if (_config.WorldEvents.AllowedBeastKeys != null && _config.WorldEvents.AllowedBeastKeys.Count > 0)
-            {
-                allowedKeys = _config.WorldEvents.AllowedBeastKeys;
-            }
-            else
-            {
-                allowedKeys = _config.Beasts.Keys.ToList();
-            }
-
-            if (allowedKeys.Count == 0)
-            {
-                Dbg("World event: no allowed beast keys configured");
-                return;
-            }
-
-            var beastKey = allowedKeys.GetRandom();
-            if (!_config.Beasts.TryGetValue(beastKey, out var def))
-            {
-                Dbg($"World event: beast key '{beastKey}' not found in config");
-                return;
-            }
-
-            // Select a spawnpoint (attempt group-based lookup, fallback to random position)
-            Vector3 spawnPos = Vector3.zero;
-            var spawnGroup = _config.WorldEvents.SpawnpointGroup;
-
-            if (!string.IsNullOrEmpty(spawnGroup) && _data.Spawnpoints.TryGetValue(spawnGroup, out var spawnList) && spawnList.Count > 0)
-            {
-                var spawn = SelectWeightedSpawnpoint(spawnList);
-                if (spawn != null)
-                {
-                    spawnPos = spawn.Position.ToVector3();
-                    spawnPos.y = TerrainMeta.HeightMap.GetHeight(spawnPos);
-                }
-                else
-                {
-                    // Fallback: pick a random location on the map
-                    spawnPos = new Vector3(
-                        UnityEngine.Random.Range(0f, TerrainMeta.Size.x),
-                        100f,
-                        UnityEngine.Random.Range(0f, TerrainMeta.Size.z)
-                    );
-                    spawnPos.y = TerrainMeta.HeightMap.GetHeight(spawnPos);
-                }
-            }
-            else
-            {
-                // Fallback: pick a random location on the map
-                spawnPos = new Vector3(
-                    UnityEngine.Random.Range(0f, TerrainMeta.Size.x),
-                    100f,
-                    UnityEngine.Random.Range(0f, TerrainMeta.Size.z)
-                );
-                spawnPos.y = TerrainMeta.HeightMap.GetHeight(spawnPos);
-            }
-
-            // Spawn the beast
-            var entity = SpawnBeast(def, spawnPos);
-            if (entity != null)
-            {
-                Dbg($"World event spawned '{def.DisplayName}' at {spawnPos}");
-            }
-            else
-            {
-                Dbg($"World event failed to spawn '{def.DisplayName}'");
-            }
         }
 
         private void OnEntityTakeDamage(BaseCombatEntity entity, HitInfo info)
@@ -1351,13 +1243,33 @@ namespace Oxide.Plugins
             BasePlayer killer = info?.InitiatorPlayer;
             string killerName = killer != null ? killer.displayName : "unknown";
 
-            // Track tier kills for escalation progression
-            if (!string.IsNullOrEmpty(tierId))
+            // Update per-player tier progression (only if there is a killer)
+            if (!string.IsNullOrEmpty(tierId) && killer != null && _config.TierEscalation.Enabled)
             {
-                if (!_data.TierKills.ContainsKey(tierId))
-                    _data.TierKills[tierId] = 0;
-                _data.TierKills[tierId]++;
-                Dbg($"Tier '{tierId}' kill count incremented to {_data.TierKills[tierId]}");
+                var p = GetOrCreateProgress(killer.userID);
+                ApplyProgressResetIfNeeded(p);
+
+                // Increment kills for this tier
+                p.KillsByTier[tierId] = p.KillsByTier.GetValueOrDefault(tierId, 0) + 1;
+                p.LastProgressUtc = DateTime.UtcNow.ToOADate();
+
+                int currentKills = p.KillsByTier[tierId];
+                Dbg($"Player {killerName} ({killer.userID}): tier '{tierId}' kill count is now {currentKills}");
+
+                // Check if player advances tier
+                var rule = _config.TierEscalation.Rules?.FirstOrDefault(r =>
+                    string.Equals(r.FromTierId, p.CurrentTierId, StringComparison.OrdinalIgnoreCase));
+
+                if (rule != null && string.Equals(tierId, p.CurrentTierId, StringComparison.OrdinalIgnoreCase) &&
+                    currentKills >= rule.KillsToAdvance)
+                {
+                    string prevTier = p.CurrentTierId;
+                    p.CurrentTierId = ResolveNextTierId(p.CurrentTierId);
+                    p.KillsByTier[prevTier] = 0; // Reset kill count for previous tier
+                    Dbg($"Player {killerName} advanced from tier '{prevTier}' to '{p.CurrentTierId}'");
+                }
+
+                SaveData();
             }
 
             // Mythic death FX with runtime theme
@@ -2037,6 +1949,72 @@ namespace Oxide.Plugins
             // Keep RGB, replace A
             return $"{parts[0]} {parts[1]} {parts[2]} {alpha:0.###}";
         }
+
+        // ==================== PER-PLAYER TIER PROGRESSION ====================
+
+        private PlayerTierProgress GetOrCreateProgress(ulong userId)
+        {
+            if (!_data.PlayerProgress.TryGetValue(userId, out var p) || p == null)
+            {
+                p = new PlayerTierProgress { CurrentTierId = "T1", LastProgressUtc = DateTime.UtcNow.ToOADate() };
+                _data.PlayerProgress[userId] = p;
+            }
+            return p;
+        }
+
+        private void ApplyProgressResetIfNeeded(PlayerTierProgress p)
+        {
+            if (p == null) return;
+            if (!_config.TierEscalation.Enabled) return;
+
+            float hours = _config.TierEscalation.ResetAfterHours;
+            if (hours <= 0f) return;
+
+            double now = DateTime.UtcNow.ToOADate();
+            double elapsedHours = (now - p.LastProgressUtc) * 24.0;
+            if (elapsedHours >= hours)
+            {
+                p.CurrentTierId = "T1";
+                p.KillsByTier.Clear();
+                p.LastProgressUtc = now;
+                Dbg($"Player tier progress reset (inactive for {elapsedHours:F1} hours)");
+            }
+        }
+
+        private string ResolveNextTierId(string currentTierId)
+        {
+            if (!_config.TierEscalation.Enabled) return currentTierId;
+
+            // Cycle logic first (if at cap tier)
+            if (_config.TierEscalation.CycleEnabled &&
+                string.Equals(currentTierId, _config.TierEscalation.CycleAtTierId, StringComparison.OrdinalIgnoreCase))
+            {
+                return string.IsNullOrEmpty(_config.TierEscalation.CycleToTierId) ? "T1" : _config.TierEscalation.CycleToTierId;
+            }
+
+            // Normal rule-based progression
+            var rules = _config.TierEscalation.Rules;
+            if (rules != null)
+            {
+                foreach (var r in rules)
+                {
+                    if (string.Equals(r.FromTierId, currentTierId, StringComparison.OrdinalIgnoreCase))
+                        return string.IsNullOrEmpty(r.ToTierId) ? currentTierId : r.ToTierId;
+                }
+            }
+
+            return currentTierId; // no rule => stay
+        }
+
+        private string GetPlayerCurrentTier(ulong userId)
+        {
+            var p = GetOrCreateProgress(userId);
+            ApplyProgressResetIfNeeded(p);
+            if (string.IsNullOrEmpty(p.CurrentTierId)) p.CurrentTierId = "T1";
+            return p.CurrentTierId;
+        }
+
+        // ==================== END PER-PLAYER TIER PROGRESSION ====================
 
         private bool IsBossOutsideLeash(BaseEntity boss, Vector3 spawnPos)
         {
@@ -2793,10 +2771,21 @@ namespace Oxide.Plugins
 
         private void TryRunWorldEvent()
         {
-            BeastDef def = SelectEventBeastDef();
+            // Select a target player for this world event (per-player tier selection)
+            var candidates = BasePlayer.activePlayerList.Where(p => p != null && p.IsConnected).ToList();
+            if (candidates.Count == 0)
+            {
+                Dbg("TryRunWorldEvent: no online players");
+                return;
+            }
+
+            var targetPlayer = candidates.GetRandom();
+            string targetTier = GetPlayerCurrentTier(targetPlayer.userID);
+
+            BeastDef def = SelectEventBeastDefForTier(targetTier, _config.WorldEvents.AllowedBeastKeys);
             if (def == null)
             {
-                Dbg("TryRunWorldEvent: no eligible beast def found");
+                Dbg($"TryRunWorldEvent: no eligible beast def found for tier '{targetTier}'");
                 return;
             }
 
@@ -2807,11 +2796,11 @@ namespace Oxide.Plugins
                 return;
             }
 
-            Dbg($"World event spawning '{def.DisplayName}' at {spawnPos}");
+            Dbg($"World event spawning '{def.DisplayName}' at {spawnPos} for player {targetPlayer.displayName} (tier {targetTier})");
             SpawnBeast(def, spawnPos.Value);
         }
 
-        private BeastDef SelectEventBeastDef()
+        private BeastDef SelectEventBeastDefForTier(string tierId, List<string> allowedKeys)
         {
             // Build eligible pool
             var eligible = new List<string>();
@@ -2821,83 +2810,43 @@ namespace Oxide.Plugins
                 eligible.Add(key);
 
             // Filter by AllowedBeastKeys if set
-            if (_config.WorldEvents.AllowedBeastKeys != null && _config.WorldEvents.AllowedBeastKeys.Count > 0)
+            if (allowedKeys != null && allowedKeys.Count > 0)
             {
-                eligible = eligible.Where(k => _config.WorldEvents.AllowedBeastKeys.Contains(k)).ToList();
+                eligible = eligible.Where(k => allowedKeys.Contains(k)).ToList();
             }
 
             if (eligible.Count == 0)
             {
-                Dbg("SelectEventBeastDef: no eligible beasts after allowed filter");
+                Dbg("SelectEventBeastDefForTier: no eligible beasts after allowed filter");
                 return null;
             }
 
-            // Apply tier escalation filter if enabled
-            if (_config.TierEscalation.Enabled)
+            // Filter by tier
+            if (_config.TierEscalation.Enabled && !string.IsNullOrEmpty(tierId))
             {
-                string currentTier = ResolveCurrentTierId();
                 var tieredEligible = eligible.Where(k =>
                 {
                     var def = _config.Beasts[k];
-                    return def.TierId == currentTier;
+                    return string.Equals(def.TierId, tierId, StringComparison.OrdinalIgnoreCase);
                 }).ToList();
 
                 // If tier filter yields results, use it; otherwise fall back to all
                 if (tieredEligible.Count > 0)
                 {
                     eligible = tieredEligible;
-                    Dbg($"SelectEventBeastDef: filtered to tier '{currentTier}', {eligible.Count} candidates");
+                    Dbg($"SelectEventBeastDefForTier: filtered to tier '{tierId}', {eligible.Count} candidates");
                 }
             }
 
             if (eligible.Count == 0)
             {
-                Dbg("SelectEventBeastDef: no eligible beasts after tier filter");
+                Dbg("SelectEventBeastDefForTier: no eligible beasts after tier filter");
                 return null;
             }
 
             // Choose randomly
             string chosenKey = eligible.GetRandom();
             return _config.Beasts[chosenKey];
-        }
-
-        private string ResolveCurrentTierId()
-        {
-            // Default tier: T1 if exists; else first beast's tier
-            string defaultTier = "T1";
-            if (!_config.Beasts.Values.Any(b => b.TierId == "T1"))
-            {
-                var first = _config.Beasts.Values.FirstOrDefault();
-                if (first != null)
-                    defaultTier = first.TierId;
-            }
-
-            if (!_config.TierEscalation.Enabled)
-                return defaultTier;
-
-            string tier = defaultTier;
-            int iterations = 0;
-            const int maxIterations = 10;
-
-            while (iterations < maxIterations)
-            {
-                iterations++;
-
-                var rule = _config.TierEscalation.Rules.FirstOrDefault(r => r.FromTierId == tier);
-                if (rule == null) break;
-
-                int kills = _data.TierKills.GetValueOrDefault(tier, 0);
-                if (kills >= rule.KillsToEscalate)
-                {
-                    tier = rule.ToTierId;
-                }
-                else
-                {
-                    break;
-                }
-            }
-
-            return tier;
         }
 
         private Vector3? SelectWeightedSpawnPoint(string group)
