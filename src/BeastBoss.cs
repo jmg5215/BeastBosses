@@ -957,14 +957,14 @@ namespace Oxide.Plugins
 
         private readonly HashSet<BaseEntity> _bosses = new HashSet<BaseEntity>();
         private readonly Dictionary<ulong, float> _damageMeter = new Dictionary<ulong, float>();
-        private readonly Dictionary<NetworkableId, BeastDef> _beastDefs = new Dictionary<NetworkableId, BeastDef>();
-        private readonly Dictionary<NetworkableId, float> _bossDamageMultipliers = new Dictionary<NetworkableId, float>();
+        private readonly Dictionary<uint, BeastDef> _beastDefs = new Dictionary<uint, BeastDef>();
+        private readonly Dictionary<uint, float> _bossDamageMultipliers = new Dictionary<uint, float>();
 
         private readonly Dictionary<string, BaseEntity> _activeBossByTier = new Dictionary<string, BaseEntity>();
-        private readonly Dictionary<NetworkableId, string> _bossTierById = new Dictionary<NetworkableId, string>();
+        private readonly Dictionary<uint, string> _bossTierById = new Dictionary<uint, string>();
         private readonly Dictionary<string, double> _tierLastDeathTime = new Dictionary<string, double>();
-        private readonly Dictionary<NetworkableId, MapMarkerGenericRadius> _bossMarkers =
-            new Dictionary<NetworkableId, MapMarkerGenericRadius>();
+        private readonly Dictionary<uint, MapMarkerGenericRadius> _bossMarkers =
+            new Dictionary<uint, MapMarkerGenericRadius>();
 
         // HUD tracking: player -> boss & timers
         private readonly Dictionary<ulong, BaseCombatEntity> _hudBossTargets = new Dictionary<ulong, BaseCombatEntity>();
@@ -1876,6 +1876,11 @@ namespace Oxide.Plugins
         }
         // ==================== END NETWORK ID HELPERS ====================
 
+        private NetworkableId ToNetId(uint id)
+        {
+            try { return new NetworkableId(id); } catch { return default(NetworkableId); }
+        }
+
         private bool IsMythicBoss(uint id)
         {
             return _mythicBossIds != null && _mythicBossIds.Contains(id);
@@ -2353,7 +2358,7 @@ namespace Oxide.Plugins
             return entity;
         }
 
-        private void DropConfiguredLoot(NetworkableId bossId, Vector3 pos, BeastDef def)
+        private void DropConfiguredLoot(uint bossId, Vector3 pos, BeastDef def)
         {
             var container = new ItemContainer();
             int slots = Mathf.Max(6, def.Loot.Count);
