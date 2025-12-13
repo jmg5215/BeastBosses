@@ -1396,40 +1396,6 @@ namespace Oxide.Plugins
         }
 
         [ChatCommand("beastaddspawn")]
-        private void CmdBeastAddSpawn(BasePlayer player, string command, string[] args)
-        {
-            if (!permission.UserHasPermission(player.UserIDString, _config.PermissionAdmin))
-            {
-                SendReply(player, $"{_config.ChatPrefix}You lack permission.");
-                return;
-            }
-
-            if (args.Length < 1)
-            {
-                SendReply(player, $"{_config.ChatPrefix}Usage: /beastaddspawn <tierId>");
-                return;
-            }
-
-            var tierId = args[0];
-            if (!_config.Tiers.ContainsKey(tierId))
-            {
-                SendReply(player, $"{_config.ChatPrefix}Tier '{tierId}' is not defined in config.");
-                return;
-            }
-
-            if (!_data.TierSpawns.TryGetValue(tierId, out var list))
-            {
-                list = new List<Vector3Serializable>();
-                _data.TierSpawns[tierId] = list;
-            }
-
-            var pos = player.transform.position;
-            list.Add(Vector3Serializable.FromVector3(pos));
-            SaveData();
-
-            SendReply(player, $"{_config.ChatPrefix}Added spawnpoint for tier '{tierId}' at {pos}.");
-        }
-
         [ChatCommand("beastclearspawns")]
         private void CmdBeastClearSpawns(BasePlayer player, string command, string[] args)
         {
