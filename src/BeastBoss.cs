@@ -1277,16 +1277,16 @@ namespace Oxide.Plugins
             // Mythic death FX with runtime theme
             if (isMythic)
             {
-                var theme = GetBossTheme(entity.net.ID.Value, def.Theme);
+                var theme = GetBossTheme(bossId, def.Theme);
                 var key = string.IsNullOrEmpty(_config.Mythic.DeathFxKey) ? "explosion_big" : _config.Mythic.DeathFxKey;
                 var mythicDeathFx = GetRandomFx(key, null, theme);
                 if (!string.IsNullOrEmpty(mythicDeathFx))
                 {
                     Effect.server.Run(mythicDeathFx, entity.transform.position + Vector3.up * 0.5f);
                 }
-                _mythicBossIds.Remove(entity.net.ID.Value);
-                _runtimeBossName.Remove(entity.net.ID.Value);
-                _runtimeBossTheme.Remove(entity.net.ID.Value);
+                _mythicBossIds.Remove(bossId);
+                _runtimeBossName.Remove(bossId);
+                _runtimeBossTheme.Remove(bossId);
                 Dbg($"Mythic boss death FX triggered and cleared from tracking");
             }
 
