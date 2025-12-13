@@ -1932,7 +1932,7 @@ namespace Oxide.Plugins
                     if (_config.EnrageIndicator.Enabled && boss?.net != null)
                     {
                         // Get the BeastComponent to check enrage status
-                        if (_bossComponents.TryGetValue(boss.net.ID.Value, out var comp) && comp != null)
+                        if (_bossComponents.TryGetValue(NetId(boss), out var comp) && comp != null)
                         {
                             if (comp.IsEnraged && comp.EnrageSecondsRemaining > 0f)
                             {
