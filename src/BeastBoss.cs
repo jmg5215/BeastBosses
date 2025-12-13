@@ -485,6 +485,21 @@ namespace Oxide.Plugins
             // Proximity-based warnings to nearby players
             public ProximityWarningSettings ProximityWarnings = new ProximityWarningSettings();
 
+            // Boss leash system: soft reset when kiting too far
+            public LeashSettings Leash = new LeashSettings();
+
+            // Weather-enhanced ability procs (lightning strikes, etc.)
+            public WeatherProcSettings WeatherProcs = new WeatherProcSettings();
+
+            // Timed world events that spawn bosses automatically
+            public WorldEventSettings WorldEvents = new WorldEventSettings();
+
+            // Tier escalation: progress through tiers based on kill counts
+            public TierEscalationSettings TierEscalation = new TierEscalationSettings();
+
+            // Mythic variants: rare boss versions with special FX and loot
+            public MythicSettings Mythic = new MythicSettings();
+
             /*
              * FX Library keys and usage:
              *  - "roar_blast"   : Used by DoRoar() for the main roar visual + optional impact FX.
@@ -539,6 +554,11 @@ namespace Oxide.Plugins
                 {
                     "assets/bundled/prefabs/fx/impacts/additive/fire.prefab",
                     "assets/bundled/prefabs/fx/explosions/explosion_01.prefab"
+                },
+                ["lightning_strike"] = new List<string>
+                {
+                    "assets/bundled/prefabs/fx/player/electrocute.prefab",
+                    "assets/bundled/prefabs/fx/impacts/additive/explosion.prefab"
                 }
             };
         }
@@ -595,6 +615,95 @@ namespace Oxide.Plugins
             public string DeathMessage = "<color=#ffcc00>[Info]</color> Nearby BeastBoss (<color=#ff5555>{name}</color>) has been defeated.";
 
             public float PlayerCooldownSeconds = 20f;
+        }
+
+        public class LeashSettings
+        {
+            public bool Enabled = true;
+
+            // Primary leash radius from the boss spawn point (meters).
+            public float RadiusMeters = 80f;
+
+            // If boss exceeds this distance, it resets immediately (safety mechanism).
+            // Set to 0 to disable. Recommended: RadiusMeters * 1.25
+            public float HardResetRadiusMeters = 120f;
+
+            // If boss remains outside RadiusMeters for this long (seconds), it will reset.
+            public float ResetAfterSecondsOutside = 8f;
+
+            // Heal fraction on reset (1.0 = full heal).
+            public float ResetHealFraction = 1.0f;
+
+            // Incoming damage multiplier when boss is outside RadiusMeters.
+            // Example: 0.25 reduces player damage to 25% while boss is outside leash.
+            public float OutsideIncomingDamageMultiplier = 0.25f;
+
+            // Return-to-spawn walk behavior
+            public bool WalkBackToSpawn = true;
+            public float ReturnStopDistanceMeters = 6f;     // how close is "back home"
+            public float ReturnMaxSeconds = 30f;            // fail-safe: if stuck too long, fallback to teleport OR force-reset in place
+            public bool FallbackTeleportIfStuck = true;     // if true, teleport to spawn after ReturnMaxSeconds
+            public float ReturnDestinationRefreshSeconds = 2f; // how often to re-issue destination while returning
+
+            // Optional messaging on reset
+            public bool AnnounceResetToChat = true;
+            public string ResetMessage = "<color=#ffcc00>[BeastBoss]</color> <color=#ff5555>{name}</color> has retreated and recovered!";
+        }
+
+        public class WeatherProcSettings
+        {
+            public bool Enabled = true;
+            public bool StormThemeOnly = true;
+            public bool RequireBadWeather = false; // if true, only proc during rain/fog
+            public float ProcChancePerCheck = 0.15f;
+            public float ProcCheckIntervalSeconds = 3f;
+            public float ProcRadiusMeters = 4f;
+            public float ProcDamage = 12f; // set 0 for FX only
+        }
+
+        public class WorldEventSettings
+        {
+            public bool Enabled = false;
+
+            // Example: every 60–90 minutes, pick one boss and spawn it at a spawnpoint group.
+            public float MinMinutesBetweenEvents = 60f;
+            public float MaxMinutesBetweenEvents = 90f;
+
+            public string SpawnpointGroup = "default"; // reuse your BotReSpawn-like manual spawnpoint grouping
+            public List<string> AllowedBeastKeys = new List<string>(); // empty => all
+        }
+
+        public class TierEscalationSettings
+        {
+            public bool Enabled = false;
+            public List<TierRule> Rules = new List<TierRule>
+            {
+                new TierRule { FromTierId = "T1", KillsToEscalate = 10, ToTierId = "T2" },
+                new TierRule { FromTierId = "T2", KillsToEscalate = 10, ToTierId = "T3" }
+            };
+        }
+
+        public class TierRule
+        {
+            public string FromTierId;
+            public int KillsToEscalate;
+            public string ToTierId;
+        }
+
+        public class MythicSettings
+        {
+            public bool Enabled = true;
+            public float Chance = 0.05f;
+
+            public string NamePrefix = "Mythic ";
+            public string NameSuffix = "";
+            public string ThemeOverride = ""; // optional, empty => keep original
+
+            public string SpawnFxKey = "enrage_burst";
+            public string EnrageFxKey = "enrage_aura";
+            public string DeathFxKey = "explosion_big"; // if missing, reuse "enrage_burst"
+
+            public float LootMultiplier = 1.5f; // multiply amounts; do not change items
         }
 
         public class TierConfig
@@ -742,13 +851,25 @@ namespace Oxide.Plugins
                 new Vector3Serializable { x = v.x, y = v.y, z = v.z };
         }
 
+        private class SpawnPoint
+        {
+            public Vector3Serializable Position;
+            public float Weight = 1f;
+        }
+
         private class StoredData
         {
             public Dictionary<string, List<Vector3Serializable>> TierSpawns =
                 new Dictionary<string, List<Vector3Serializable>>();
 
+            public Dictionary<string, List<SpawnPoint>> Spawnpoints =
+                new Dictionary<string, List<SpawnPoint>>();
+
             public Dictionary<string, Dictionary<ulong, double>> TierLockouts =
                 new Dictionary<string, Dictionary<ulong, double>>();
+
+            public Dictionary<string, int> TierKills =
+                new Dictionary<string, int>(); // Track kills per tier for escalation
         }
 
         private StoredData _data;
@@ -776,7 +897,18 @@ namespace Oxide.Plugins
 
         // Marker update timer and proximity warning cooldowns
         private Timer _markerUpdateTimer;
+        private Timer _worldEventTimer;
         private readonly Dictionary<ulong, float> _proximityCooldown = new Dictionary<ulong, float>();
+
+        // Boss component lookup for leash system and spawn point retrieval
+        private readonly Dictionary<uint, BeastComponent> _bossComponents = new Dictionary<uint, BeastComponent>();
+
+        // Mythic boss tracking
+        private readonly HashSet<uint> _mythicBossIds = new HashSet<uint>();
+
+        // Runtime name and theme overrides (for mythic variants)
+        private readonly Dictionary<uint, string> _runtimeBossName = new Dictionary<uint, string>();
+        private readonly Dictionary<uint, string> _runtimeBossTheme = new Dictionary<uint, string>();
 
         private void LoadData()
         {
@@ -791,8 +923,12 @@ namespace Oxide.Plugins
 
             if (_data.TierSpawns == null)
                 _data.TierSpawns = new Dictionary<string, List<Vector3Serializable>>();
+            if (_data.Spawnpoints == null)
+                _data.Spawnpoints = new Dictionary<string, List<SpawnPoint>>();
             if (_data.TierLockouts == null)
                 _data.TierLockouts = new Dictionary<string, Dictionary<ulong, double>>();
+            if (_data.TierKills == null)
+                _data.TierKills = new Dictionary<string, int>();
         }
 
         private void SaveData()
@@ -813,6 +949,10 @@ namespace Oxide.Plugins
             // Start marker update timer
             if (_markerUpdateTimer == null && _config.Markers.Enabled)
                 _markerUpdateTimer = timer.Every(Mathf.Max(1f, _config.Markers.UpdateIntervalSeconds), UpdateBossMarkers);
+
+            // Schedule world events
+            if (_config.WorldEvents.Enabled)
+                ScheduleNextWorldEvent();
         }
 
         private void Unload()
@@ -842,11 +982,21 @@ namespace Oxide.Plugins
             _bossTierById.Clear();
             _bossMarkers.Clear();
             _proximityCooldown.Clear();
+            _bossComponents.Clear();
+            _mythicBossIds.Clear();
+            _runtimeBossName.Clear();
+            _runtimeBossTheme.Clear();
 
             if (_markerUpdateTimer != null)
             {
                 _markerUpdateTimer.Destroy();
                 _markerUpdateTimer = null;
+            }
+
+            if (_worldEventTimer != null)
+            {
+                _worldEventTimer.Destroy();
+                _worldEventTimer = null;
             }
 
             foreach (var userId in _suspendedExternalHud.ToList())
@@ -906,6 +1056,132 @@ namespace Oxide.Plugins
             }
         }
 
+        private void ScheduleNextWorldEvent()
+        {
+            if (!_config.WorldEvents.Enabled) return;
+
+            var mins = UnityEngine.Random.Range(_config.WorldEvents.MinMinutesBetweenEvents, _config.WorldEvents.MaxMinutesBetweenEvents);
+            _worldEventTimer?.Destroy();
+            _worldEventTimer = timer.Once(mins * 60f, () =>
+            {
+                TryRunWorldEvent();
+                ScheduleNextWorldEvent();
+            });
+
+            Dbg($"World event scheduled for {mins} minutes from now");
+        }
+
+        private string DetermineTierForEscalation()
+        {
+            if (!_config.TierEscalation.Enabled)
+                return null;
+
+            // Check escalation rules in order
+            foreach (var rule in _config.TierEscalation.Rules)
+            {
+                if (!_data.TierKills.TryGetValue(rule.FromTierId, out int kills))
+                    kills = 0;
+
+                if (kills >= rule.KillsToEscalate)
+                    return rule.ToTierId;
+            }
+
+            return null;
+        }
+
+        private string GetMythicDisplayName(BeastDef def)
+        {
+            return _config.Mythic.NamePrefix + def.DisplayName + _config.Mythic.NameSuffix;
+        }
+
+        private void TryRunWorldEvent()
+        {
+            if (!_config.WorldEvents.Enabled) return;
+
+            // Select a beast to spawn
+            List<string> allowedKeys;
+            
+            // Check for tier escalation
+            var escalatedTierId = DetermineTierForEscalation();
+            if (!string.IsNullOrEmpty(escalatedTierId))
+            {
+                // Use escalated tier
+                allowedKeys = _config.Beasts.Values
+                    .Where(b => string.Equals(b.TierId, escalatedTierId, StringComparison.OrdinalIgnoreCase))
+                    .Select(b => _config.Beasts.FirstOrDefault(kvp => kvp.Value == b).Key)
+                    .Where(k => !string.IsNullOrEmpty(k))
+                    .ToList();
+                
+                Dbg($"World event using escalated tier: {escalatedTierId}");
+            }
+            else if (_config.WorldEvents.AllowedBeastKeys != null && _config.WorldEvents.AllowedBeastKeys.Count > 0)
+            {
+                allowedKeys = _config.WorldEvents.AllowedBeastKeys;
+            }
+            else
+            {
+                allowedKeys = _config.Beasts.Keys.ToList();
+            }
+
+            if (allowedKeys.Count == 0)
+            {
+                Dbg("World event: no allowed beast keys configured");
+                return;
+            }
+
+            var beastKey = allowedKeys.GetRandom();
+            if (!_config.Beasts.TryGetValue(beastKey, out var def))
+            {
+                Dbg($"World event: beast key '{beastKey}' not found in config");
+                return;
+            }
+
+            // Select a spawnpoint (attempt group-based lookup, fallback to random position)
+            Vector3 spawnPos = Vector3.zero;
+            var spawnGroup = _config.WorldEvents.SpawnpointGroup;
+
+            if (!string.IsNullOrEmpty(spawnGroup) && _data.Spawnpoints.TryGetValue(spawnGroup, out var spawnList) && spawnList.Count > 0)
+            {
+                var spawn = SelectWeightedSpawnpoint(spawnList);
+                if (spawn != null)
+                {
+                    spawnPos = spawn.Position.ToVector3();
+                    spawnPos.y = TerrainMeta.HeightMap.GetHeight(spawnPos);
+                }
+                else
+                {
+                    // Fallback: pick a random location on the map
+                    spawnPos = new Vector3(
+                        UnityEngine.Random.Range(0f, TerrainMeta.Size.x),
+                        100f,
+                        UnityEngine.Random.Range(0f, TerrainMeta.Size.z)
+                    );
+                    spawnPos.y = TerrainMeta.HeightMap.GetHeight(spawnPos);
+                }
+            }
+            else
+            {
+                // Fallback: pick a random location on the map
+                spawnPos = new Vector3(
+                    UnityEngine.Random.Range(0f, TerrainMeta.Size.x),
+                    100f,
+                    UnityEngine.Random.Range(0f, TerrainMeta.Size.z)
+                );
+                spawnPos.y = TerrainMeta.HeightMap.GetHeight(spawnPos);
+            }
+
+            // Spawn the beast
+            var entity = SpawnBeast(def, spawnPos);
+            if (entity != null)
+            {
+                Dbg($"World event spawned '{def.DisplayName}' at {spawnPos}");
+            }
+            else
+            {
+                Dbg($"World event failed to spawn '{def.DisplayName}'");
+            }
+        }
+
         private void OnEntityTakeDamage(BaseCombatEntity entity, HitInfo info)
         {
             if (entity == null || info == null) return;
@@ -943,6 +1219,24 @@ namespace Oxide.Plugins
 
                 info.damageTypes.ScaleAll(_config.GlobalIncomingDamageMultiplier);
 
+                // Apply damage reduction if boss is returning to spawn or outside leash radius
+                if (_config.Leash.Enabled)
+                {
+                    BeastComponent comp;
+                    if (_bossComponents.TryGetValue(entity.net.ID, out comp))
+                    {
+                        // Even stronger reduction while returning (to prevent players from intercepting)
+                        if (comp.IsReturning)
+                        {
+                            info.damageTypes.ScaleAll(0.05f);
+                        }
+                        else if (_config.Leash.OutsideIncomingDamageMultiplier < 1f && IsBossOutsideLeash(entity, comp.SpawnPos))
+                        {
+                            info.damageTypes.ScaleAll(_config.Leash.OutsideIncomingDamageMultiplier);
+                        }
+                    }
+                }
+
                 if (initiatorPlayer != null)
                 {
                     var dmg = info.damageTypes.Total();
@@ -971,9 +1265,37 @@ namespace Oxide.Plugins
             string tierId = def.TierId;
             var now = Interface.Oxide.Now;
 
+            // Check if this was a mythic variant
+            bool isMythic = _mythicBossIds.Contains(entity.net.ID.Value);
+
             // Get killer name for announcements
             BasePlayer killer = info?.InitiatorPlayer;
             string killerName = killer != null ? killer.displayName : "unknown";
+
+            // Track tier kills for escalation progression
+            if (!string.IsNullOrEmpty(tierId))
+            {
+                if (!_data.TierKills.ContainsKey(tierId))
+                    _data.TierKills[tierId] = 0;
+                _data.TierKills[tierId]++;
+                Dbg($"Tier '{tierId}' kill count incremented to {_data.TierKills[tierId]}");
+            }
+
+            // Mythic death FX with runtime theme
+            if (isMythic)
+            {
+                var theme = GetBossTheme(entity.net.ID.Value, def.Theme);
+                var key = string.IsNullOrEmpty(_config.Mythic.DeathFxKey) ? "explosion_big" : _config.Mythic.DeathFxKey;
+                var mythicDeathFx = GetRandomFx(key, null, theme);
+                if (!string.IsNullOrEmpty(mythicDeathFx))
+                {
+                    Effect.server.Run(mythicDeathFx, entity.transform.position + Vector3.up * 0.5f);
+                }
+                _mythicBossIds.Remove(entity.net.ID.Value);
+                _runtimeBossName.Remove(entity.net.ID.Value);
+                _runtimeBossTheme.Remove(entity.net.ID.Value);
+                Dbg($"Mythic boss death FX triggered and cleared from tracking");
+            }
 
             // Remove world map marker
             RemoveBossMarker(entity);
@@ -1000,8 +1322,10 @@ namespace Oxide.Plugins
                 WarnPlayersNear(entity.transform.position, _config.ProximityWarnings.RadiusMeters, warnMsg);
             }
 
-            AnnounceNearby(entity.transform.position, $"{def.DisplayName} has been slain!");
-            DropConfiguredLoot(entity.transform.position, def);
+            // Use runtime display name (includes mythic variant names)
+            var deathDisplayName = GetBossDisplayName(entity.net.ID.Value, def.DisplayName);
+            AnnounceNearby(entity.transform.position, $"{deathDisplayName} has been slain!");
+            DropConfiguredLoot(entity.net.ID, entity.transform.position, def);
 
             if (!string.IsNullOrEmpty(tierId))
             {
@@ -1024,6 +1348,7 @@ namespace Oxide.Plugins
             _damageMeter.Clear();
             _beastDefs.Remove(entity.net.ID);
             _bossDamageMultipliers.Remove(entity.net.ID);
+            _bossComponents.Remove(entity.net.ID);  // Clean up component tracking
 
             if (_bossMarkers.TryGetValue(entity.net.ID, out var marker) && marker != null && !marker.IsDestroyed)
             {
@@ -1154,6 +1479,138 @@ namespace Oxide.Plugins
             foreach (var kv in _data.TierSpawns)
             {
                 SendReply(player, $"- {kv.Key}: {kv.Value.Count} spawn(s)");
+            }
+        }
+
+        [ChatCommand("beastaddspawn")]
+        private void CmdBeastAddSpawn(BasePlayer player, string command, string[] args)
+        {
+            if (!permission.UserHasPermission(player.UserIDString, _config.PermissionAdmin))
+            {
+                SendReply(player, $"{_config.ChatPrefix}You lack permission.");
+                return;
+            }
+
+            string group = args.Length > 0 ? args[0] : "default";
+            var pos = player.transform.position;
+
+            if (!_data.Spawnpoints.TryGetValue(group, out var spawnList))
+            {
+                spawnList = new List<SpawnPoint>();
+                _data.Spawnpoints[group] = spawnList;
+            }
+
+            var sp = new SpawnPoint
+            {
+                Position = Vector3Serializable.FromVector3(pos),
+                Weight = 1f
+            };
+
+            spawnList.Add(sp);
+            SaveData();
+
+            SendReply(player, $"{_config.ChatPrefix}Added spawnpoint to group '{group}' at {pos} with weight 1.0 (index: {spawnList.Count - 1})");
+        }
+
+        [ChatCommand("beastremovespawn")]
+        private void CmdBeastRemoveSpawn(BasePlayer player, string command, string[] args)
+        {
+            if (!permission.UserHasPermission(player.UserIDString, _config.PermissionAdmin))
+            {
+                SendReply(player, $"{_config.ChatPrefix}You lack permission.");
+                return;
+            }
+
+            if (args.Length < 2)
+            {
+                SendReply(player, $"{_config.ChatPrefix}Usage: /beastremovespawn <group> <index>");
+                return;
+            }
+
+            string group = args[0];
+            if (!int.TryParse(args[1], out int index))
+            {
+                SendReply(player, $"{_config.ChatPrefix}Invalid index.");
+                return;
+            }
+
+            if (!_data.Spawnpoints.TryGetValue(group, out var spawnList) || index < 0 || index >= spawnList.Count)
+            {
+                SendReply(player, $"{_config.ChatPrefix}Group '{group}' or index {index} not found.");
+                return;
+            }
+
+            spawnList.RemoveAt(index);
+            SaveData();
+
+            SendReply(player, $"{_config.ChatPrefix}Removed spawnpoint {index} from group '{group}'.");
+        }
+
+        [ChatCommand("beastspweight")]
+        private void CmdBeastSpawnWeight(BasePlayer player, string command, string[] args)
+        {
+            if (!permission.UserHasPermission(player.UserIDString, _config.PermissionAdmin))
+            {
+                SendReply(player, $"{_config.ChatPrefix}You lack permission.");
+                return;
+            }
+
+            if (args.Length < 3)
+            {
+                SendReply(player, $"{_config.ChatPrefix}Usage: /beastspweight <group> <index> <weight>");
+                return;
+            }
+
+            string group = args[0];
+            if (!int.TryParse(args[1], out int index) || !float.TryParse(args[2], out float weight))
+            {
+                SendReply(player, $"{_config.ChatPrefix}Invalid index or weight.");
+                return;
+            }
+
+            if (weight <= 0f)
+            {
+                SendReply(player, $"{_config.ChatPrefix}Weight must be greater than 0.");
+                return;
+            }
+
+            if (!_data.Spawnpoints.TryGetValue(group, out var spawnList) || index < 0 || index >= spawnList.Count)
+            {
+                SendReply(player, $"{_config.ChatPrefix}Group '{group}' or index {index} not found.");
+                return;
+            }
+
+            spawnList[index].Weight = weight;
+            SaveData();
+
+            SendReply(player, $"{_config.ChatPrefix}Set weight of spawnpoint {index} in group '{group}' to {weight}.");
+        }
+
+        [ChatCommand("beastlistspawns")]
+        private void CmdBeastListSpawns(BasePlayer player, string command, string[] args)
+        {
+            if (!permission.UserHasPermission(player.UserIDString, _config.PermissionAdmin))
+            {
+                SendReply(player, $"{_config.ChatPrefix}You lack permission.");
+                return;
+            }
+
+            if (_data.Spawnpoints.Count == 0)
+            {
+                SendReply(player, $"{_config.ChatPrefix}No spawnpoint groups defined.");
+                return;
+            }
+
+            SendReply(player, $"{_config.ChatPrefix}Spawnpoint groups:");
+            foreach (var kv in _data.Spawnpoints)
+            {
+                SendReply(player, $"- {kv.Key}: {kv.Value.Count} point(s)");
+                for (int i = 0; i < kv.Value.Count; i++)
+                {
+                    var sp = kv.Value[i];
+                    var pos = sp.Position.ToVector3();
+                    SendReply(player, $"  [{i}] {pos} weight={sp.Weight}");
+                }
             }
         }
 
@@ -1334,7 +1791,11 @@ namespace Oxide.Plugins
                     radiusMarker.color1 = ParseColor(_config.Markers.Color);
                     radiusMarker.radius = _config.Markers.Radius;
                     if (_config.Markers.ShowLabel && def != null)
-                        radiusMarker.SetLabel(def.DisplayName);
+                    {
+                        // Use runtime display name (includes mythic variant names)
+                        var displayName = GetBossDisplayName(boss.net.ID.Value, def.DisplayName);
+                        radiusMarker.SetLabel(displayName);
+                    }
                     radiusMarker.SendUpdate();
                 }
             }
@@ -1395,6 +1856,261 @@ namespace Oxide.Plugins
             return Color.red;
         }
 
+        private bool IsBossOutsideLeash(BaseEntity boss, Vector3 spawnPos)
+        {
+            if (boss == null || boss.IsDestroyed || !_config.Leash.Enabled)
+                return false;
+
+            float r = _config.Leash.RadiusMeters;
+            if (r <= 0f) return false;
+
+            return Vector3.Distance(boss.transform.position, spawnPos) > r;
+        }
+
+        private bool IsBossBeyondHardReset(BaseEntity boss, Vector3 spawnPos)
+        {
+            if (boss == null || boss.IsDestroyed || !_config.Leash.Enabled)
+                return false;
+
+            float hr = _config.Leash.HardResetRadiusMeters;
+            if (hr <= 0f) return false;
+
+            return Vector3.Distance(boss.transform.position, spawnPos) > hr;
+        }
+
+        private bool TrySetNpcDestination(BaseNpc npc, Vector3 dest)
+        {
+            if (npc == null) return false;
+
+            // 1) Direct call if method exists in this build
+            try
+            {
+                var mi = npc.GetType().GetMethod("SetDestination", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new[] { typeof(Vector3) }, null);
+                if (mi != null)
+                {
+                    mi.Invoke(npc, new object[] { dest });
+                    return true;
+                }
+            }
+            catch { }
+
+            // 2) Try Navigator-style APIs via reflection (best-effort)
+            try
+            {
+                var navProp = npc.GetType().GetProperty("Navigator", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                var navObj = navProp?.GetValue(npc, null);
+                if (navObj != null)
+                {
+                    var mi2 = navObj.GetType().GetMethod("SetDestination", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new[] { typeof(Vector3) }, null);
+                    if (mi2 != null)
+                    {
+                        mi2.Invoke(navObj, new object[] { dest });
+                        return true;
+                    }
+                }
+            }
+            catch { }
+
+            return false;
+        }
+
+        private void BeginReturnToSpawn(BeastComponent comp)
+        {
+            if (comp == null) return;
+
+            var boss = comp.Entity;
+            var def = comp.Def;
+            var spawnPos = comp.SpawnPos;
+
+            if (boss == null || boss.IsDestroyed) return;
+
+            var npc = boss as BaseNpc;
+
+            // Mark returning
+            comp.SetReturning(true);
+
+            // Clear aggro / chasing (best-effort)
+            if (npc != null)
+            {
+                try { npc.SetFact(BaseNpc.Facts.IsAggro, 0, true, true); } catch { }
+                try { npc.SetFact(BaseNpc.Facts.IsChasing, 0, true, true); } catch { }
+                try { npc.SetFact(BaseNpc.Facts.IsAfraid, 0, true, true); } catch { }
+            }
+
+            // Issue destination to spawn
+            if (npc != null)
+                TrySetNpcDestination(npc, spawnPos);
+
+            // Optional messaging
+            if (_config.Leash.AnnounceResetToChat && _config.Announcements != null && _config.Announcements.Enabled)
+            {
+                Server.Broadcast(_config.Leash.ResetMessage.Replace("{name}", def.DisplayName));
+            }
+
+            Dbg($"Boss '{def.DisplayName}' starting return-to-spawn walk from {boss.transform.position} to {spawnPos}");
+        }
+
+        private void CompleteReturnReset(BaseEntity boss, BeastDef def)
+        {
+            if (boss == null || boss.IsDestroyed) return;
+
+            var combat = boss as BaseCombatEntity;
+            if (combat != null)
+            {
+                float max = Mathf.Max(1f, def.BaseHealth);
+                float healTo = max * Mathf.Clamp01(_config.Leash.ResetHealFraction);
+                combat.health = healTo;
+                combat.SendNetworkUpdateImmediate();
+            }
+
+            // Attempt to calm the AI to a neutral state
+            var npc = boss as BaseNpc;
+            if (npc != null)
+            {
+                try { npc.SetFact(BaseNpc.Facts.IsAggro, 0, true, true); } catch { }
+                try { npc.SetFact(BaseNpc.Facts.IsAfraid, 0, true, true); } catch { }
+                try { npc.SetFact(BaseNpc.Facts.IsChasing, 0, true, true); } catch { }
+            }
+
+            Dbg($"Boss '{def.DisplayName}' completed return-to-spawn reset at spawn location");
+        }
+
+        private bool IsBadWeather()
+        {
+            try
+            {
+                // Try to check ConVar weather values
+                float rain = ConVar.Weather.rain;
+                float fog = ConVar.Weather.fog;
+                return rain > 0.3f || fog > 0.3f;
+            }
+            catch
+            {
+                // Fallback: if RequireBadWeather is false, allow procs anyway; otherwise deny
+                return !_config.WeatherProcs.RequireBadWeather;
+            }
+        }
+
+        private void DoLightningProc(BaseEntity boss, BasePlayer target, float damage, float radius, string theme = "storm")
+        {
+            if (boss == null || target == null) return;
+
+            // Pick position at target + small random offset within radius
+            var targetPos = target.transform.position;
+            var randomOffset = UnityEngine.Random.insideUnitSphere * radius;
+            randomOffset.y = 0f; // Keep on ground plane
+            var strikePos = targetPos + randomOffset;
+
+            // Run lightning strike FX with runtime theme
+            var fx = GetRandomFx("lightning_strike", null, theme);
+            if (!string.IsNullOrEmpty(fx))
+            {
+                Effect.server.Run(fx, strikePos);
+            }
+
+            // Apply damage if configured
+            if (damage > 0f)
+            {
+                try
+                {
+                    HitInfo info = new HitInfo(boss, target, DamageType.ElectricShock, damage);
+                    target.Hurt(info);
+                }
+                catch
+                {
+                    // Fallback: direct damage method
+                    target.Hurt(damage, DamageType.ElectricShock, boss, useProtection: false);
+                }
+            }
+
+            Dbg($"Lightning proc triggered at {strikePos} targeting {target.displayName} for {damage} damage");
+        }
+
+        private BasePlayer GetPrimaryTarget(BaseEntity boss)
+        {
+            if (boss == null) return null;
+
+            // Try to get NPC's current target
+            var npc = boss as BaseNpc;
+            if (npc != null && npc.Target is BasePlayer player)
+                return player;
+
+            // Fallback: find closest player within aggro range (20m estimate)
+            var closestPlayer = BasePlayer.activePlayerList
+                .Where(p => p != null && p.IsConnected && !p.IsSleeping() && Vector3.Distance(p.transform.position, boss.transform.position) <= 20f)
+                .OrderBy(p => Vector3.Distance(p.transform.position, boss.transform.position))
+                .FirstOrDefault();
+
+            return closestPlayer;
+        }
+
+        private SpawnPoint SelectWeightedSpawnpoint(List<SpawnPoint> spawnpoints)
+        {
+            if (spawnpoints == null || spawnpoints.Count == 0)
+                return null;
+
+            if (spawnpoints.Count == 1)
+                return spawnpoints[0];
+
+            // Calculate total weight
+            float totalWeight = 0f;
+            foreach (var sp in spawnpoints)
+            {
+                totalWeight += Mathf.Max(0.01f, sp.Weight); // Ensure positive weight
+            }
+
+            // Roll random value
+            float roll = UnityEngine.Random.Range(0f, totalWeight);
+            float accumulated = 0f;
+
+            // Find selected spawnpoint
+            foreach (var sp in spawnpoints)
+            {
+                accumulated += Mathf.Max(0.01f, sp.Weight);
+                if (roll < accumulated)
+                    return sp;
+            }
+
+            // Fallback (shouldn't reach here)
+            return spawnpoints[spawnpoints.Count - 1];
+        }
+
+        private void SoftResetBoss(BaseEntity boss, BeastDef def, Vector3 spawnPos)
+        {
+            if (boss == null || boss.IsDestroyed) return;
+
+            // Teleport back to spawn (no despawn).
+            boss.transform.position = spawnPos;
+            boss.SendNetworkUpdateImmediate();
+
+            // Restore health.
+            var combat = boss as BaseCombatEntity;
+            if (combat != null)
+            {
+                float max = Mathf.Max(1f, def.BaseHealth);
+                float healTo = max * Mathf.Clamp01(_config.Leash.ResetHealFraction);
+                combat.health = healTo;
+                combat.SendNetworkUpdateImmediate();
+            }
+
+            // Attempt to calm/stop the AI (best-effort).
+            var npc = boss as BaseNpc;
+            if (npc != null)
+            {
+                try { npc.SetFact(BaseNpc.Facts.IsAggro, 0, true, true); } catch { }
+                try { npc.SetFact(BaseNpc.Facts.IsAfraid, 0, true, true); } catch { }
+                try { npc.SetFact(BaseNpc.Facts.IsChasing, 0, true, true); } catch { }
+            }
+
+            Dbg($"Soft reset boss '{def.DisplayName}' prefab='{boss.ShortPrefabName}' id={boss.net.ID} back to spawn");
+
+            if (_config.Leash.AnnounceResetToChat && _config.Announcements != null && _config.Announcements.Enabled)
+            {
+                var msg = _config.Leash.ResetMessage.Replace("{name}", def.DisplayName);
+                Server.Broadcast(msg);
+            }
+        }
+
         private BaseEntity SpawnBeast(BeastDef def, Vector3 pos)
         {
             var entity = GameManager.server.CreateEntity(def.Prefab, pos, Quaternion.identity, true);
@@ -1418,6 +2134,10 @@ namespace Oxide.Plugins
             _bosses.Add(entity);
             _beastDefs[entity.net.ID] = def;
             _bossDamageMultipliers[entity.net.ID] = def.DamageMultiplier;
+            _bossComponents[entity.net.ID] = driver;  // Track component for leash system
+
+            // Apply mythic variant if rolled
+            ApplyMythicVariantIfRolled(entity, def, pos);
 
             Dbg($"Spawned boss '{def.DisplayName}' prefab='{entity.ShortPrefabName}' id={entity.net.ID} pos={pos}");
 
@@ -1445,23 +2165,37 @@ namespace Oxide.Plugins
                 WarnPlayersNear(entity.transform.position, _config.ProximityWarnings.RadiusMeters, warnMsg);
             }
 
-            AnnounceNearby(entity.transform.position, $"<color=#ffdd66>{def.DisplayName}</color> has appeared!");
+            // Use mythic display name if applicable
+            var displayName = GetBossDisplayName(entity.net.ID.Value, def.DisplayName);
+            AnnounceNearby(entity.transform.position, $"<color=#ffdd66>{displayName}</color> has appeared!");
 
             return entity;
         }
 
-        private void DropConfiguredLoot(Vector3 pos, BeastDef def)
+        private void DropConfiguredLoot(NetworkableId bossId, Vector3 pos, BeastDef def)
         {
             var container = new ItemContainer();
             int slots = Mathf.Max(6, def.Loot.Count);
             container.ServerInitialize(null, slots);
             container.GiveUID();
 
+            // Check if this boss was a mythic variant for loot multiplier
+            bool isMythic = _mythicBossIds.Contains(bossId.Value);
+            float lootMultiplier = isMythic ? _config.Mythic.LootMultiplier : 1.0f;
+
             foreach (var entry in def.Loot)
             {
                 var defItem = ItemManager.FindItemDefinition(entry.ShortName);
                 if (defItem == null) continue;
-                var item = ItemManager.Create(defItem, entry.Amount, entry.Skin);
+                
+                // Apply mythic loot multiplier
+                int amount = entry.Amount;
+                if (isMythic)
+                {
+                    amount = Mathf.Max(1, Mathf.RoundToInt(entry.Amount * lootMultiplier));
+                }
+                
+                var item = ItemManager.Create(defItem, amount, entry.Skin);
                 item?.MoveToContainer(container);
             }
 
@@ -1482,6 +2216,11 @@ namespace Oxide.Plugins
             container.entityOwner = dropEntity;
             dropEntity.ResetRemovalTime();
             dropEntity.Spawn();
+            
+            if (isMythic)
+            {
+                Dbg($"Dropped loot for mythic boss with {lootMultiplier}x multiplier");
+            }
         }
 
         private bool IsPlayerLockedOut(ulong userId, string tierId, out double remainingSeconds)
@@ -1563,6 +2302,45 @@ namespace Oxide.Plugins
             return fallback;
         }
 
+        private string GetBossDisplayName(uint id, string fallback)
+        {
+            if (_runtimeBossName.TryGetValue(id, out var name) && !string.IsNullOrEmpty(name))
+                return name;
+            return fallback;
+        }
+
+        private string GetBossTheme(uint id, string fallbackTheme)
+        {
+            if (_runtimeBossTheme.TryGetValue(id, out var theme) && !string.IsNullOrEmpty(theme))
+                return theme;
+            return fallbackTheme;
+        }
+
+        private void ApplyMythicVariantIfRolled(BaseEntity boss, BeastDef def, Vector3 pos)
+        {
+            if (boss == null || boss.net == null) return;
+            if (!_config.Mythic.Enabled) return;
+
+            if (UnityEngine.Random.value > Mathf.Clamp01(_config.Mythic.Chance)) return;
+
+            var bossId = boss.net.ID.Value;
+            _mythicBossIds.Add(bossId);
+
+            var name = $"{_config.Mythic.NamePrefix}{def.DisplayName}{_config.Mythic.NameSuffix}";
+            _runtimeBossName[bossId] = name;
+
+            var theme = string.IsNullOrEmpty(_config.Mythic.ThemeOverride) ? def.Theme : _config.Mythic.ThemeOverride;
+            _runtimeBossTheme[bossId] = theme;
+
+            // Spawn FX (mythic)
+            var fxKey = string.IsNullOrEmpty(_config.Mythic.SpawnFxKey) ? "enrage_burst" : _config.Mythic.SpawnFxKey;
+            var fx = GetRandomFx(fxKey, null, theme);
+            if (!string.IsNullOrEmpty(fx))
+                Effect.server.Run(fx, pos + Vector3.up * 0.5f);
+
+            Dbg($"Mythic variant spawned: {name} (id={bossId}, theme={theme})");
+        }
+
         private void Dbg(string msg)
         {
             if (_config == null || !_config.Debug) return;
@@ -1634,6 +2412,182 @@ namespace Oxide.Plugins
             npc.SendNetworkUpdate();
 
             Dbg($"DisableFleeForBoss applied to {npc.ShortPrefabName} ({npc.net?.ID})");
+        }
+
+        #endregion
+
+        #region WorldEventPipeline
+
+        private void StartWorldEvents()
+        {
+            if (!_config.WorldEvents.Enabled) return;
+            Dbg("World events enabled; scheduling first event...");
+            ScheduleNextWorldEvent();
+        }
+
+        private void ScheduleNextWorldEvent()
+        {
+            if (_worldEventTimer != null)
+            {
+                _worldEventTimer.Destroy();
+                _worldEventTimer = null;
+            }
+
+            float nextMinutes = UnityEngine.Random.Range(
+                Mathf.Max(1f, _config.WorldEvents.MinMinutesBetweenEvents),
+                Mathf.Max(1f, _config.WorldEvents.MaxMinutesBetweenEvents)
+            );
+
+            _worldEventTimer = timer.Once(nextMinutes * 60f, () =>
+            {
+                TryRunWorldEvent();
+                ScheduleNextWorldEvent();
+            });
+
+            Dbg($"Next world event scheduled in {nextMinutes:F1} minutes");
+        }
+
+        private void TryRunWorldEvent()
+        {
+            BeastDef def = SelectEventBeastDef();
+            if (def == null)
+            {
+                Dbg("TryRunWorldEvent: no eligible beast def found");
+                return;
+            }
+
+            Vector3? spawnPos = SelectWeightedSpawnPoint(_config.WorldEvents.SpawnpointGroup);
+            if (spawnPos == null)
+            {
+                Dbg($"TryRunWorldEvent: no spawn position found for group '{_config.WorldEvents.SpawnpointGroup}'");
+                return;
+            }
+
+            Dbg($"World event spawning '{def.DisplayName}' at {spawnPos}");
+            SpawnBeast(def, spawnPos.Value);
+        }
+
+        private BeastDef SelectEventBeastDef()
+        {
+            // Build eligible pool
+            var eligible = new List<string>();
+
+            // Start with all beasts
+            foreach (var key in _config.Beasts.Keys)
+                eligible.Add(key);
+
+            // Filter by AllowedBeastKeys if set
+            if (_config.WorldEvents.AllowedBeastKeys != null && _config.WorldEvents.AllowedBeastKeys.Count > 0)
+            {
+                eligible = eligible.Where(k => _config.WorldEvents.AllowedBeastKeys.Contains(k)).ToList();
+            }
+
+            if (eligible.Count == 0)
+            {
+                Dbg("SelectEventBeastDef: no eligible beasts after allowed filter");
+                return null;
+            }
+
+            // Apply tier escalation filter if enabled
+            if (_config.TierEscalation.Enabled)
+            {
+                string currentTier = ResolveCurrentTierId();
+                var tieredEligible = eligible.Where(k =>
+                {
+                    var def = _config.Beasts[k];
+                    return def.TierId == currentTier;
+                }).ToList();
+
+                // If tier filter yields results, use it; otherwise fall back to all
+                if (tieredEligible.Count > 0)
+                {
+                    eligible = tieredEligible;
+                    Dbg($"SelectEventBeastDef: filtered to tier '{currentTier}', {eligible.Count} candidates");
+                }
+            }
+
+            if (eligible.Count == 0)
+            {
+                Dbg("SelectEventBeastDef: no eligible beasts after tier filter");
+                return null;
+            }
+
+            // Choose randomly
+            string chosenKey = eligible.GetRandom();
+            return _config.Beasts[chosenKey];
+        }
+
+        private string ResolveCurrentTierId()
+        {
+            // Default tier: T1 if exists; else first beast's tier
+            string defaultTier = "T1";
+            if (!_config.Beasts.Values.Any(b => b.TierId == "T1"))
+            {
+                var first = _config.Beasts.Values.FirstOrDefault();
+                if (first != null)
+                    defaultTier = first.TierId;
+            }
+
+            if (!_config.TierEscalation.Enabled)
+                return defaultTier;
+
+            string tier = defaultTier;
+            int iterations = 0;
+            const int maxIterations = 10;
+
+            while (iterations < maxIterations)
+            {
+                iterations++;
+
+                var rule = _config.TierEscalation.Rules.FirstOrDefault(r => r.FromTierId == tier);
+                if (rule == null) break;
+
+                int kills = _data.TierKills.GetValueOrDefault(tier, 0);
+                if (kills >= rule.KillsToEscalate)
+                {
+                    tier = rule.ToTierId;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            return tier;
+        }
+
+        private Vector3? SelectWeightedSpawnPoint(string group)
+        {
+            if (!_data.Spawnpoints.TryGetValue(group, out var spawnList) || spawnList.Count == 0)
+                return null;
+
+            if (spawnList.Count == 1)
+                return spawnList[0].Position.ToVector3();
+
+            // Weighted selection
+            float totalWeight = 0f;
+            foreach (var sp in spawnList)
+            {
+                if (sp.Weight > 0)
+                    totalWeight += sp.Weight;
+            }
+
+            if (totalWeight <= 0)
+                return spawnList[0].Position.ToVector3(); // fallback
+
+            float roll = UnityEngine.Random.Range(0f, totalWeight);
+            float accumulated = 0f;
+            foreach (var sp in spawnList)
+            {
+                if (sp.Weight > 0)
+                {
+                    accumulated += sp.Weight;
+                    if (roll <= accumulated)
+                        return sp.Position.ToVector3();
+                }
+            }
+
+            return spawnList[spawnList.Count - 1].Position.ToVector3();
         }
 
         #endregion
@@ -1809,6 +2763,23 @@ namespace Oxide.Plugins
             private bool _summonedCubs;
             private bool _enraged;
 
+            // Weather proc tracking
+            private float _nextWeatherProcCheck;
+
+            // Leash system tracking
+            private Vector3 _spawnPos;
+            private float _outsideLeashSince = -1f;
+
+            // Return-to-spawn state
+            private bool _isReturning;
+            private float _returnStartedAt;
+            private float _nextReturnDestAt;
+
+            public Vector3 SpawnPos => _spawnPos;
+            public BaseEntity Entity => _entity;
+            public BeastDef Def => _def;
+            public bool IsReturning => _isReturning;
+
             public void Init(BeastBoss plugin, BaseEntity entity, BeastDef def)
             {
                 _plugin = plugin;
@@ -1816,6 +2787,15 @@ namespace Oxide.Plugins
                 _combat = entity as BaseCombatEntity;
                 _animal = entity as BaseAnimalNPC;
                 _def = def;
+
+                // Store spawn position for leash system
+                _spawnPos = entity.transform.position;
+                _outsideLeashSince = -1f;
+
+                // Initialize returning state
+                _isReturning = false;
+                _returnStartedAt = 0f;
+                _nextReturnDestAt = 0f;
 
                 // Ensure flee behavior is disabled even if something resets stats later.
                 _plugin.DisableFleeForBoss(entity);
@@ -1825,6 +2805,7 @@ namespace Oxide.Plugins
                 _nextCharge = now + UnityEngine.Random.Range(8f, 12f);
                 _nextFrost = now + UnityEngine.Random.Range(10f, 14f);
                 _nextFireTrail = now + UnityEngine.Random.Range(10f, 16f);
+                _nextWeatherProcCheck = now + UnityEngine.Random.Range(1f, 2f);
 
                 InvokeRepeating(nameof(Tick), 0.5f, 0.25f);
             }
@@ -1832,6 +2813,16 @@ namespace Oxide.Plugins
             private void OnDestroy()
             {
                 CancelInvoke(nameof(Tick));
+            }
+
+            public void SetReturning(bool returning)
+            {
+                _isReturning = returning;
+                if (returning)
+                {
+                    _returnStartedAt = Time.realtimeSinceStartup;
+                    _nextReturnDestAt = 0f;
+                }
             }
 
             private void Tick()
@@ -1842,7 +2833,79 @@ namespace Oxide.Plugins
                     return;
                 }
 
-                var now = Time.realtimeSinceStartup;
+                // Return-to-spawn state machine (if enabled)
+                if (_plugin._config.Leash.Enabled && _plugin._config.Leash.WalkBackToSpawn)
+                {
+                    // If we are currently returning, manage the return-to-spawn journey
+                    if (_isReturning)
+                    {
+                        var now = Time.realtimeSinceStartup;
+                        var npc = _entity as BaseNpc;
+
+                        // Refresh destination periodically
+                        if (npc != null && now >= _nextReturnDestAt)
+                        {
+                            _plugin.TrySetNpcDestination(npc, _spawnPos);
+                            _nextReturnDestAt = now + Mathf.Max(0.5f, _plugin._config.Leash.ReturnDestinationRefreshSeconds);
+                        }
+
+                        // If close enough to spawn, finish reset
+                        if (Vector3.Distance(_entity.transform.position, _spawnPos) <= Mathf.Max(1f, _plugin._config.Leash.ReturnStopDistanceMeters))
+                        {
+                            _plugin.CompleteReturnReset(_entity, _def);
+                            SetReturning(false);
+                            _outsideLeashSince = -1f;
+                            return;
+                        }
+
+                        // Stuck fail-safe
+                        if (_plugin._config.Leash.ReturnMaxSeconds > 0f && (now - _returnStartedAt) >= _plugin._config.Leash.ReturnMaxSeconds)
+                        {
+                            if (_plugin._config.Leash.FallbackTeleportIfStuck)
+                            {
+                                _entity.transform.position = _spawnPos;
+                                _entity.SendNetworkUpdateImmediate();
+                                _plugin.CompleteReturnReset(_entity, _def);
+                            }
+                            else
+                            {
+                                _plugin.CompleteReturnReset(_entity, _def);
+                            }
+
+                            SetReturning(false);
+                            _outsideLeashSince = -1f;
+                            return;
+                        }
+
+                        // While returning, skip combat ability logic (boss is walking home)
+                        return;
+                    }
+
+                    // If not returning, evaluate leash breach and decide to start returning
+                    if (_plugin.IsBossBeyondHardReset(_entity, _spawnPos))
+                    {
+                        _plugin.BeginReturnToSpawn(this);
+                        return;
+                    }
+
+                    if (_plugin.IsBossOutsideLeash(_entity, _spawnPos))
+                    {
+                        var now = Time.realtimeSinceStartup;
+                        if (_outsideLeashSince < 0f) _outsideLeashSince = now;
+                        else if (_plugin._config.Leash.ResetAfterSecondsOutside > 0f &&
+                                 (now - _outsideLeashSince) >= _plugin._config.Leash.ResetAfterSecondsOutside)
+                        {
+                            _plugin.BeginReturnToSpawn(this);
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        _outsideLeashSince = -1f;
+                    }
+                }
+
+                var now2 = Time.realtimeSinceStartup;
 
                 if (_combat != null)
                 {
@@ -1866,28 +2929,67 @@ namespace Oxide.Plugins
                     CheckPhaseScaling();
                 }
 
-                if (_def.AbilityRoar.Enabled && now >= _nextRoar)
+                if (_def.AbilityRoar.Enabled && now2 >= _nextRoar)
                 {
                     DoRoar();
-                    _nextRoar = now + Mathf.Max(5f, _def.AbilityRoar.Interval);
+                    _nextRoar = now2 + Mathf.Max(5f, _def.AbilityRoar.Interval);
                 }
 
-                if (_def.AbilityCharge.Enabled && now >= _nextCharge)
+                if (_def.AbilityCharge.Enabled && now2 >= _nextCharge)
                 {
                     DoCharge();
-                    _nextCharge = now + Mathf.Max(8f, _def.AbilityCharge.Interval);
+                    _nextCharge = now2 + Mathf.Max(8f, _def.AbilityCharge.Interval);
                 }
 
-                if (_def.AbilityFrostAura.Enabled && now >= _nextFrost)
+                if (_def.AbilityFrostAura.Enabled && now2 >= _nextFrost)
                 {
                     DoFrostAura();
-                    _nextFrost = now + Mathf.Max(8f, _def.AbilityFrostAura.Interval);
+                    _nextFrost = now2 + Mathf.Max(8f, _def.AbilityFrostAura.Interval);
                 }
 
-                if (_def.AbilityFireTrail.Enabled && now >= _nextFireTrail)
+                if (_def.AbilityFireTrail.Enabled && now2 >= _nextFireTrail)
                 {
                     DoFireTrail();
-                    _nextFireTrail = now + Mathf.Max(8f, _def.AbilityFireTrail.Interval);
+                    _nextFireTrail = now2 + Mathf.Max(8f, _def.AbilityFireTrail.Interval);
+                }
+
+                // Weather-enhanced proc checks (lightning strikes, etc.)
+                CheckWeatherProc(now2);
+            }
+
+            private void CheckWeatherProc(float now)
+            {
+                if (!_plugin._config.WeatherProcs.Enabled) return;
+
+                // Get runtime theme (includes mythic overrides)
+                var theme = _plugin.GetBossTheme(_entity.net.ID.Value, _def.Theme);
+
+                // Check theme filter
+                if (_plugin._config.WeatherProcs.StormThemeOnly && theme != "storm")
+                    return;
+
+                // Check bad weather requirement
+                if (_plugin._config.WeatherProcs.RequireBadWeather && !_plugin.IsBadWeather())
+                    return;
+
+                // Check if enraged (only proc while enraged)
+                if (!_enraged)
+                    return;
+
+                // Check proc interval
+                if (now >= _nextWeatherProcCheck)
+                {
+                    _nextWeatherProcCheck = now + Mathf.Max(1f, _plugin._config.WeatherProcs.ProcCheckIntervalSeconds);
+
+                    // Roll for proc chance
+                    if (UnityEngine.Random.value <= _plugin._config.WeatherProcs.ProcChancePerCheck)
+                    {
+                        var target = _plugin.GetPrimaryTarget(_entity);
+                        if (target != null)
+                        {
+                            _plugin.DoLightningProc(_entity, target, _plugin._config.WeatherProcs.ProcDamage, _plugin._config.WeatherProcs.ProcRadiusMeters, theme);
+                        }
+                    }
                 }
             }
 
@@ -2083,6 +3185,19 @@ namespace Oxide.Plugins
                 var fx = _plugin.GetRandomFx("enrage_burst", s.EffectPrefab, _def.Theme);
                 if (!string.IsNullOrEmpty(fx))
                     Effect.server.Run(fx, pos);
+
+                // Mythic enrage FX overlay with runtime theme
+                if (_entity?.net != null && _plugin._mythicBossIds.Contains(_entity.net.ID.Value))
+                {
+                    var theme = _plugin.GetBossTheme(_entity.net.ID.Value, _def.Theme);
+                    var key = string.IsNullOrEmpty(_plugin._config.Mythic.EnrageFxKey) ? "enrage_aura" : _plugin._config.Mythic.EnrageFxKey;
+                    var mythicFx = _plugin.GetRandomFx(key, null, theme);
+                    if (!string.IsNullOrEmpty(mythicFx))
+                    {
+                        Effect.server.Run(mythicFx, pos);
+                        _plugin.Dbg($"Mythic enrage FX triggered for boss id={_entity.net.ID}");
+                    }
+                }
 
                 _plugin.PrintBossChat($"<color=#ff0000>{_def.DisplayName}</color> becomes enraged!");
             }
