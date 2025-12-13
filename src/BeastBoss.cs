@@ -1172,7 +1172,8 @@ namespace Oxide.Plugins
             if (_bosses.Contains(entity))
             {
                 BeastDef def;
-                _beastDefs.TryGetValue(entity.net.ID, out def);
+                uint id = NetId(entity);
+                _beastDefs.TryGetValue(id, out def);
                 var tierId = def != null ? def.TierId : null;
 
                 var initiatorPlayer = info.InitiatorPlayer;
@@ -1194,7 +1195,8 @@ namespace Oxide.Plugins
                 if (_config.Leash.Enabled)
                 {
                     BeastComponent comp;
-                    if (_bossComponents.TryGetValue(entity.net.ID, out comp))
+                    uint id = NetId(entity);
+                    if (_bossComponents.TryGetValue(id, out comp))
                     {
                         // Even stronger reduction while returning (to prevent players from intercepting)
                         if (comp.IsReturning)
@@ -1231,13 +1233,14 @@ namespace Oxide.Plugins
             _bosses.Remove(entity);
 
             BeastDef def;
-            if (!_beastDefs.TryGetValue(entity.net.ID, out def)) return;
+            uint id = NetId(entity);
+            if (!_beastDefs.TryGetValue(id, out def)) return;
 
             string tierId = def.TierId;
             var now = Interface.Oxide.Now;
 
             // Check if this was a mythic variant
-            bool isMythic = _mythicBossIds.Contains(entity.net.ID.Value);
+            bool isMythic = _mythicBossIds.Contains(id);
 
             // Get killer name for announcements
             BasePlayer killer = info?.InitiatorPlayer;
@@ -1314,9 +1317,9 @@ namespace Oxide.Plugins
             }
 
             // Use runtime display name (includes mythic variant names)
-            var deathDisplayName = GetBossDisplayName(entity.net.ID.Value, def.DisplayName);
+            var deathDisplayName = GetBossDisplayName(id, def.DisplayName);
             AnnounceNearby(entity.transform.position, $"{deathDisplayName} has been slain!");
-            DropConfiguredLoot(entity.net.ID, entity.transform.position, def);
+            DropConfiguredLoot(id, entity.transform.position, def);
 
             if (!string.IsNullOrEmpty(tierId))
             {
@@ -1337,16 +1340,16 @@ namespace Oxide.Plugins
             }
 
             _damageMeter.Clear();
-            _beastDefs.Remove(entity.net.ID);
-            _bossDamageMultipliers.Remove(entity.net.ID);
-            _bossComponents.Remove(entity.net.ID);  // Clean up component tracking
+            _beastDefs.Remove(id);
+            _bossDamageMultipliers.Remove(id);
+            _bossComponents.Remove(id);  // Clean up component tracking
 
-            if (_bossMarkers.TryGetValue(entity.net.ID, out var marker) && marker != null && !marker.IsDestroyed)
+            if (_bossMarkers.TryGetValue(id, out var marker) && marker != null && !marker.IsDestroyed)
             {
                 marker.Kill();
             }
-            _bossMarkers.Remove(entity.net.ID);
-            _bossTierById.Remove(entity.net.ID);
+            _bossMarkers.Remove(id);
+            _bossTierById.Remove(id);
 
             // Clear HUD for any players tracking this boss
             ClearHudForBoss(entity);
@@ -1755,7 +1758,7 @@ namespace Oxide.Plugins
                     if (_config.Markers.ShowLabel && def != null)
                     {
                         // Use runtime display name (includes mythic variant names)
-                        var displayName = GetBossDisplayName(boss.net.ID.Value, def.DisplayName);
+                        var displayName = GetBossDisplayName(NetId(boss), def.DisplayName);
                         radiusMarker.SetLabel(displayName);
                     }
                     radiusMarker.SendUpdate();
@@ -1763,7 +1766,7 @@ namespace Oxide.Plugins
             }
             catch { }
 
-            _bossMarkers[boss.net.ID] = marker as MapMarkerGenericRadius;
+            _bossMarkers[NetId(boss)] = marker as MapMarkerGenericRadius;
         }
 
         private void RemoveBossMarker(BaseEntity boss)
@@ -1771,9 +1774,10 @@ namespace Oxide.Plugins
             if (boss == null || boss.net == null) return;
 
             MapMarkerGenericRadius marker;
-            if (_bossMarkers.TryGetValue(boss.net.ID, out marker))
+            uint id = NetId(boss);
+            if (_bossMarkers.TryGetValue(id, out marker))
             {
-                _bossMarkers.Remove(boss.net.ID);
+                _bossMarkers.Remove(id);
                 if (marker != null && !marker.IsDestroyed) marker.Kill();
             }
         }
@@ -1788,7 +1792,7 @@ namespace Oxide.Plugins
                     continue;
 
                 MapMarkerGenericRadius marker;
-                if (_bossMarkers.TryGetValue(boss.net.ID, out marker))
+                if (_bossMarkers.TryGetValue(NetId(boss), out marker))
                 {
                     if (marker == null || marker.IsDestroyed) continue;
                     marker.transform.position = boss.transform.position;
@@ -1856,6 +1860,21 @@ namespace Oxide.Plugins
             if (ColorUtility.TryParseHtmlString(hex, out c)) return c;
             return Color.red;
         }
+
+        // ==================== NETWORK ID HELPERS ====================
+        // Normalize NetworkableId to uint for dictionary/set keys
+        private uint NetId(BaseEntity ent)
+        {
+            if (ent == null || ent.net == null) return 0u;
+            try { return ent.net.ID.Value; } catch { try { return (uint)ent.net.ID; } catch { return 0u; } }
+        }
+
+        private uint NetId(BaseNetworkable net)
+        {
+            if (net == null || net.net == null) return 0u;
+            try { return net.net.ID.Value; } catch { try { return (uint)net.net.ID; } catch { return 0u; } }
+        }
+        // ==================== END NETWORK ID HELPERS ====================
 
         private bool IsMythicBoss(uint id)
         {
@@ -2293,19 +2312,20 @@ namespace Oxide.Plugins
             driver.Init(this, entity, def);
 
             _bosses.Add(entity);
-            _beastDefs[entity.net.ID] = def;
-            _bossDamageMultipliers[entity.net.ID] = def.DamageMultiplier;
-            _bossComponents[entity.net.ID] = driver;  // Track component for leash system
+            uint id = NetId(entity);
+            _beastDefs[id] = def;
+            _bossDamageMultipliers[id] = def.DamageMultiplier;
+            _bossComponents[id] = driver;  // Track component for leash system
 
             // Apply mythic variant if rolled
             ApplyMythicVariantIfRolled(entity, def, pos);
 
-            Dbg($"Spawned boss '{def.DisplayName}' prefab='{entity.ShortPrefabName}' id={entity.net.ID} pos={pos}");
+            Dbg($"Spawned boss '{def.DisplayName}' prefab='{entity.ShortPrefabName}' id={id} pos={pos}");
 
             if (!string.IsNullOrEmpty(def.TierId))
             {
                 _activeBossByTier[def.TierId] = entity;
-                _bossTierById[entity.net.ID] = def.TierId;
+                _bossTierById[id] = def.TierId;
                 _tierLastDeathTime[def.TierId] = Interface.Oxide.Now;
             }
 
@@ -2424,10 +2444,11 @@ namespace Oxide.Plugins
         internal void ApplyEnrageBuff(BaseEntity entity, BeastDef def)
         {
             if (entity == null) return;
-            if (!_bossDamageMultipliers.ContainsKey(entity.net.ID))
-                _bossDamageMultipliers[entity.net.ID] = def.DamageMultiplier;
+            uint id = NetId(entity);
+            if (!_bossDamageMultipliers.ContainsKey(id))
+                _bossDamageMultipliers[id] = def.DamageMultiplier;
 
-            _bossDamageMultipliers[entity.net.ID] *= def.AbilityEnrage.DamageMultiplier;
+            _bossDamageMultipliers[id] *= def.AbilityEnrage.DamageMultiplier;
         }
 
         internal void PrintBossChat(string message)
@@ -2914,7 +2935,7 @@ namespace Oxide.Plugins
             float percent = Mathf.Clamp01(current / max);
 
             string name = boss.ShortPrefabName;
-            if (_beastDefs.TryGetValue(boss.net.ID, out var def))
+            if (_beastDefs.TryGetValue(NetId(boss), out var def))
                 name = def.DisplayName;
 
             string text = string.Format(_config.Ui.TextFormat, name, Mathf.CeilToInt(current), Mathf.CeilToInt(max));
