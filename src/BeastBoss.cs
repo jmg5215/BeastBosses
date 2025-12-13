@@ -1172,8 +1172,8 @@ namespace Oxide.Plugins
             if (_bosses.Contains(entity))
             {
                 BeastDef def;
-                uint id = NetId(entity);
-                _beastDefs.TryGetValue(id, out def);
+                uint bossId = NetId(entity);
+                _beastDefs.TryGetValue(bossId, out def);
                 var tierId = def != null ? def.TierId : null;
 
                 var initiatorPlayer = info.InitiatorPlayer;
@@ -1195,7 +1195,6 @@ namespace Oxide.Plugins
                 if (_config.Leash.Enabled)
                 {
                     BeastComponent comp;
-                    uint id = NetId(entity);
                     if (_bossComponents.TryGetValue(id, out comp))
                     {
                         // Even stronger reduction while returning (to prevent players from intercepting)
@@ -1240,7 +1239,7 @@ namespace Oxide.Plugins
             var now = Interface.Oxide.Now;
 
             // Check if this was a mythic variant
-            bool isMythic = _mythicBossIds.Contains(id);
+            bool isMythic = _mythicBossIds.Contains(bossId);
 
             // Get killer name for announcements
             BasePlayer killer = info?.InitiatorPlayer;
@@ -1774,10 +1773,10 @@ namespace Oxide.Plugins
             if (boss == null || boss.net == null) return;
 
             MapMarkerGenericRadius marker;
-            uint id = NetId(boss);
-            if (_bossMarkers.TryGetValue(id, out marker))
+            uint bossId = NetId(boss);
+            if (_bossMarkers.TryGetValue(bossId, out marker))
             {
-                _bossMarkers.Remove(id);
+                _bossMarkers.Remove(bossId);
                 if (marker != null && !marker.IsDestroyed) marker.Kill();
             }
         }
@@ -2317,20 +2316,20 @@ namespace Oxide.Plugins
             driver.Init(this, entity, def);
 
             _bosses.Add(entity);
-            uint id = NetId(entity);
-            _beastDefs[id] = def;
-            _bossDamageMultipliers[id] = def.DamageMultiplier;
-            _bossComponents[id] = driver;  // Track component for leash system
+            uint bossId = NetId(entity);
+            _beastDefs[bossId] = def;
+            _bossDamageMultipliers[bossId] = def.DamageMultiplier;
+            _bossComponents[bossId] = driver;  // Track component for leash system
 
             // Apply mythic variant if rolled
             ApplyMythicVariantIfRolled(entity, def, pos);
 
-            Dbg($"Spawned boss '{def.DisplayName}' prefab='{entity.ShortPrefabName}' id={id} pos={pos}");
+            Dbg($"Spawned boss '{def.DisplayName}' prefab='{entity.ShortPrefabName}' id={bossId} pos={pos}");
 
             if (!string.IsNullOrEmpty(def.TierId))
             {
                 _activeBossByTier[def.TierId] = entity;
-                _bossTierById[id] = def.TierId;
+                _bossTierById[bossId] = def.TierId;
                 _tierLastDeathTime[def.TierId] = Interface.Oxide.Now;
             }
 
@@ -2449,11 +2448,11 @@ namespace Oxide.Plugins
         internal void ApplyEnrageBuff(BaseEntity entity, BeastDef def)
         {
             if (entity == null) return;
-            uint id = NetId(entity);
-            if (!_bossDamageMultipliers.ContainsKey(id))
-                _bossDamageMultipliers[id] = def.DamageMultiplier;
+            uint bossId = NetId(entity);
+            if (!_bossDamageMultipliers.ContainsKey(bossId))
+                _bossDamageMultipliers[bossId] = def.DamageMultiplier;
 
-            _bossDamageMultipliers[id] *= def.AbilityEnrage.DamageMultiplier;
+            _bossDamageMultipliers[bossId] *= def.AbilityEnrage.DamageMultiplier;
         }
 
         internal void PrintBossChat(string message)
@@ -2520,9 +2519,9 @@ namespace Oxide.Plugins
 
         private string BuildTitle(BeastDef def, BaseEntity boss)
         {
-            var id = boss?.net?.ID.Value ?? 0u;
-            var name = boss != null ? GetBossDisplayName(id, def.DisplayName) : def.DisplayName;
-            var subtitle = GetBossSubtitle(def, id);
+            var netId = boss?.net?.ID.Value ?? 0u;
+            var name = boss != null ? GetBossDisplayName(netId, def.DisplayName) : def.DisplayName;
+            var subtitle = GetBossSubtitle(def, netId);
             return (_config.TitlePlate.TitleFormat ?? "{name}, {subtitle}")
                 .Replace("{name}", name)
                 .Replace("{subtitle}", subtitle);
@@ -3003,10 +3002,10 @@ namespace Oxide.Plugins
         private void RemoveHud(BasePlayer player)
         {
             if (player == null) return;
-            var id = player.userID;
+            var userId = player.userID;
             CuiHelper.DestroyUi(player, "BeastBossHUD");
-            RemoveHud(id);
-            RestoreExternalHud(id);
+            RemoveHud(userId);
+            RestoreExternalHud(userId);
         }
 
         private void RemoveHud(ulong userId)
