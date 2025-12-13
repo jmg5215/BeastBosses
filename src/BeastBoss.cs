@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Oxide.Core;
 using UnityEngine;
 using Rust; // DamageType, MapMarkerGenericRadius, etc.
@@ -932,6 +933,9 @@ namespace Oxide.Plugins
                 combat.InitializeHealth(def.BaseHealth, def.BaseHealth);
             }
 
+            // Ensure this boss will never flee
+            DisableFleeForBoss(entity);
+
             var driver = entity.gameObject.AddComponent<BeastComponent>();
             driver.Init(this, entity, def);
 
@@ -1084,6 +1088,65 @@ namespace Oxide.Plugins
         {
             // Entity scaling is currently disabled; this is left as a no-op
             // so the method can be reused in the future if scaling is reintroduced.
+        }
+
+        private void DisableFleeForBoss(BaseEntity entity)
+        {
+            if (entity == null)
+                return;
+
+            var npc = entity as BaseNpc;
+            if (npc == null)
+                return;
+
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+            var type = npc.GetType();
+
+            // Try common flee-related fields; if they exist, force them to "no flee".
+            var fleeHealthField = type.GetField("fleeHealthFraction", flags);
+            if (fleeHealthField != null)
+            {
+                try
+                {
+                    fleeHealthField.SetValue(npc, 0f);
+                }
+                catch { }
+            }
+
+            var canFleeField = type.GetField("canFlee", flags);
+            if (canFleeField != null)
+            {
+                try
+                {
+                    canFleeField.SetValue(npc, false);
+                }
+                catch { }
+            }
+
+            var usePanicToFleeField = type.GetField("usePanicToFlee", flags);
+            if (usePanicToFleeField != null)
+            {
+                try
+                {
+                    usePanicToFleeField.SetValue(npc, false);
+                }
+                catch { }
+            }
+
+            // If there is a "fleeIfHurt" or similar boolean, turn it off too.
+            var fleeIfHurtField = type.GetField("fleeIfHurt", flags);
+            if (fleeIfHurtField != null)
+            {
+                try
+                {
+                    fleeIfHurtField.SetValue(npc, false);
+                }
+                catch { }
+            }
+
+            // We don't strictly need a network update for AI flags,
+            // but it is safe to send one in case any networked state changed.
+            npc.SendNetworkUpdate();
         }
 
         #endregion
@@ -1266,6 +1329,9 @@ namespace Oxide.Plugins
                 _combat = entity as BaseCombatEntity;
                 _animal = entity as BaseAnimalNPC;
                 _def = def;
+
+                // Ensure flee behavior is disabled even if something resets stats later.
+                _plugin.DisableFleeForBoss(entity);
 
                 var now = Time.realtimeSinceStartup;
                 _nextRoar = now + UnityEngine.Random.Range(4f, 8f);
