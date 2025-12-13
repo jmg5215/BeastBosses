@@ -1348,7 +1348,7 @@ namespace Oxide.Plugins
                 marker.Kill();
             }
             _bossMarkers.Remove(bossId);
-            _bossTierById.Remove(id);
+            _bossTierById.Remove(bossId);
 
             // Clear HUD for any players tracking this boss
             ClearHudForBoss(entity);
