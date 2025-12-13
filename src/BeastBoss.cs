@@ -1680,41 +1680,63 @@ namespace Oxide.Plugins
 
         private string GetGrid(Vector3 pos)
         {
+            // Best-effort grid conversion using TerrainMeta + ConVar.Server.worldsize
+            // Returns like "H12" or "Unknown" if we can't calculate.
             try
             {
-                // Try PhoneController method first (newer Rust builds)
-                var method = typeof(PhoneController).GetMethod("PositionToGridCoord", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-                if (method != null)
-                {
-                    return (string)method.Invoke(null, new object[] { pos });
-                }
-            }
-            catch { }
+                float worldSize = 0f;
+                try { worldSize = ConVar.Server.worldsize; } catch { worldSize = 0f; }
 
-            // Fallback: manual grid calculation (if PhoneController method unavailable)
-            try
-            {
-                // Standard Rust grid is ~150x150m per cell
-                const float gridSize = 150f;
-                int gridX = Mathf.FloorToInt(pos.x / gridSize);
-                int gridZ = Mathf.FloorToInt(pos.z / gridSize);
-                
-                // Convert to letters (A-Z, AA-ZZ, etc.)
-                string letter = "";
-                int num = gridX;
-                while (num >= 0)
+                if (worldSize <= 0f)
                 {
-                    letter = (char)('A' + (num % 26)) + letter;
-                    num = num / 26 - 1;
-                    if (num < 0) break;
+                    // Fallback to TerrainMeta if server var isn't available
+                    try
+                    {
+                        if (TerrainMeta.Size.x > 0f) worldSize = TerrainMeta.Size.x;
+                    }
+                    catch { }
                 }
-                
-                return letter + (gridZ + 1);
+
+                if (worldSize <= 0f) return "Unknown";
+
+                // Rust coordinates are centered at (0,0). Convert to 0..worldSize space.
+                float half = worldSize * 0.5f;
+                float x = pos.x + half;
+                float z = half - pos.z; // invert Z so north is smaller number
+
+                // clamp
+                x = Mathf.Clamp(x, 0f, worldSize - 0.01f);
+                z = Mathf.Clamp(z, 0f, worldSize - 0.01f);
+
+                // Standard Rust grids are 26 columns (A-Z). Some servers exceed; we'll support AA, AB... too.
+                const int cols = 26;
+                float cellSize = worldSize / cols;
+
+                int col = Mathf.FloorToInt(x / cellSize);
+                int row = Mathf.FloorToInt(z / cellSize) + 1; // rows are 1-based
+
+                string letters = ColToLetters(col);
+                return $"{letters}{row}";
             }
             catch
             {
-                return "unknown";
+                return "Unknown";
             }
+        }
+
+        private string ColToLetters(int col)
+        {
+            // 0 -> A, 25 -> Z, 26 -> AA, 27 -> AB ...
+            col = Mathf.Max(0, col);
+            string s = "";
+            while (true)
+            {
+                int r = col % 26;
+                s = ((char)('A' + r)) + s;
+                col = (col / 26) - 1;
+                if (col < 0) break;
+            }
+            return s;
         }
 
         private string FormatMessage(string template, BeastDef def, BaseEntity boss, string killerName = null)
