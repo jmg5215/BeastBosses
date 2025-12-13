@@ -1395,7 +1395,6 @@ namespace Oxide.Plugins
             }
         }
 
-        [ChatCommand("beastaddspawn")]
         [ChatCommand("beastclearspawns")]
         private void CmdBeastClearSpawns(BasePlayer player, string command, string[] args)
         {
