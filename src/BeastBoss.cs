@@ -730,9 +730,9 @@ namespace Oxide.Plugins
             public float ShowWithinMeters = 120f;
             public float UpdateIntervalSeconds = 1.0f;
 
-            public string PanelAnchorMin = "0.30 0.93";
-            public string PanelAnchorMax = "0.70 0.99";
-            public string PanelColor = "0.05 0.05 0.05 0.65";
+            public string PanelAnchorMin = "0.325 0.85";
+            public string PanelAnchorMax = "0.675 0.90";
+            public string PanelColor = "0.2 0.02 0.02 0.75";
 
             public int FontSize = 18;
             public string TextColor = "1 1 1 1";
@@ -1942,9 +1942,8 @@ namespace Oxide.Plugins
                     var title = BuildTitle(def, boss);
                     var bossId = NetId(boss);
 
-                    // Compute enrage countdown and pulse flag if applicable
+                    // Compute enrage countdown if applicable
                     string enrageText = null;
-                    bool enraged = false;
                     if (_config.EnrageIndicator.Enabled && boss?.net != null)
                     {
                         // Get the BeastComponent to check enrage status
@@ -1952,14 +1951,13 @@ namespace Oxide.Plugins
                         {
                             if (comp.IsEnraged && comp.EnrageSecondsRemaining > 0f)
                             {
-                                enraged = true;
                                 int seconds = Mathf.CeilToInt(comp.EnrageSecondsRemaining);
                                 enrageText = _config.EnrageIndicator.Format.Replace("{seconds}", seconds.ToString());
                             }
                         }
                     }
 
-                    DrawTitlePlate(player, bossId, def, title, enrageText, enraged);
+                    DrawTitlePlate(player, bossId, def, title, enrageText);
                 }
                 else
                 {
@@ -2145,33 +2143,6 @@ namespace Oxide.Plugins
         private string ToCuiColor(Color c)
         {
             return $"{c.r} {c.g} {c.b} {c.a}";
-        }
-
-        private float GetPulseAlpha(bool mythic = false)
-        {
-            float speed = Mathf.Max(0.1f, _config.EnrageIndicator.PulseSpeed);
-            float minA = _config.EnrageIndicator.PulseMinAlpha;
-            float maxA = _config.EnrageIndicator.PulseMaxAlpha;
-
-            if (mythic && _config.TitlePlate.MythicPulseOverrides)
-            {
-                speed *= Mathf.Max(1f, _config.TitlePlate.MythicPulseSpeedMultiplier);
-                maxA = Mathf.Clamp01(maxA + Mathf.Max(0f, _config.TitlePlate.MythicPulseAlphaBoost));
-            }
-
-            var t = Time.realtimeSinceStartup * speed;
-            var s = (Mathf.Sin(t) + 1f) * 0.5f;
-            return Mathf.Lerp(minA, maxA, s);
-        }
-
-        private string WithAlpha(string rgba, float alpha)
-        {
-            if (string.IsNullOrEmpty(rgba)) return $"0 0 0 {alpha:0.###}";
-            var parts = rgba.Split(' ');
-            if (parts.Length < 4) return rgba;
-
-            // Keep RGB, replace A
-            return $"{parts[0]} {parts[1]} {parts[2]} {alpha:0.###}";
         }
 
         // ==================== PER-PLAYER TIER PROGRESSION ====================
@@ -2820,19 +2791,14 @@ namespace Oxide.Plugins
             CuiHelper.DestroyUi(player, TitlePlateUi);
         }
 
-        private void DrawTitlePlate(BasePlayer player, uint bossId, BeastDef def, string titleText, string enrageTextOrNull = null, bool pulse = false)
+        private void DrawTitlePlate(BasePlayer player, uint bossId, BeastDef def, string titleText, string enrageTextOrNull = null)
         {
             if (player == null || !player.IsConnected) return;
 
             var container = new CuiElementContainer();
 
-            // Determine if this is a mythic boss
-            bool mythic = IsMythicBoss(bossId);
-
-            // Main panel background with optional pulsing alpha
+            // Main panel background (no pulsing)
             var panelColor = _config.TitlePlate.PanelColor;
-            if (pulse && _config.EnrageIndicator.Enabled && _config.EnrageIndicator.PulseTitlePlate)
-                panelColor = WithAlpha(panelColor, GetPulseAlpha(mythic));
 
             container.Add(new CuiPanel
             {
@@ -2846,12 +2812,7 @@ namespace Oxide.Plugins
             {
                 var borderHex = GetBorderHex(def, bossId);
                 var bc = ParseColor(borderHex);
-
-                // Apply pulse to border if enraged
-                if (pulse && _config.EnrageIndicator.Enabled && _config.EnrageIndicator.PulseBorder)
-                    bc.a = GetPulseAlpha(mythic);
-                else
-                    bc.a = 1f;
+                bc.a = 1f;
 
                 var borderColor = ToCuiColor(bc);
                 var t = Mathf.Clamp(_config.TitlePlate.BorderThickness, 0.001f, 0.05f).ToString("F4");
@@ -2961,56 +2922,110 @@ namespace Oxide.Plugins
             if (npc == null)
                 return;
 
+            ClearFleeState(npc);
+
+            // Re-enforce flee prevention for ~5 seconds post-spawn (timer-based safeguard)
+            uint bossId = NetId(entity);
+            timer.Once(0.5f, () =>
+            {
+                if (entity != null && !entity.IsDestroyed)
+                    ClearFleeState(npc);
+            });
+
+            timer.Once(1.0f, () =>
+            {
+                if (entity != null && !entity.IsDestroyed)
+                    ClearFleeState(npc);
+            });
+
+            timer.Once(2.5f, () =>
+            {
+                if (entity != null && !entity.IsDestroyed)
+                    ClearFleeState(npc);
+            });
+
+            timer.Once(5.0f, () =>
+            {
+                if (entity != null && !entity.IsDestroyed)
+                    ClearFleeState(npc);
+            });
+
+            Dbg($"DisableFleeForBoss applied to {npc.ShortPrefabName} ({npc.net?.ID}) with 5-second safeguard");
+        }
+
+        private void ClearFleeState(BaseNpc npc)
+        {
+            if (npc == null) return;
+
             const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
-            var type = npc.GetType();
 
-            // Try common flee-related fields; if they exist, force them to "no flee".
-            var fleeHealthField = type.GetField("fleeHealthFraction", flags);
-            if (fleeHealthField != null)
+            // Traverse full type hierarchy: BaseNpc -> BaseCombatEntity -> BaseEntity -> MonoBehaviour
+            var types = new List<Type>();
+            Type t = npc.GetType();
+            while (t != null && t != typeof(object))
             {
-                try
-                {
-                    fleeHealthField.SetValue(npc, 0f);
-                }
-                catch { }
+                types.Add(t);
+                t = t.BaseType;
             }
 
-            var canFleeField = type.GetField("canFlee", flags);
-            if (canFleeField != null)
+            foreach (var type in types)
             {
-                try
+                // Clear fields from this type and all base types
+                FieldInfo[] fields = type.GetFields(flags);
+                foreach (var field in fields)
                 {
-                    canFleeField.SetValue(npc, false);
+                    try
+                    {
+                        // Flee-related bool/float fields
+                        if (field.Name.IndexOf("flee", StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            if (field.FieldType == typeof(bool))
+                                field.SetValue(npc, false);
+                            else if (field.FieldType == typeof(float))
+                                field.SetValue(npc, 0f);
+                        }
+
+                        // Afraid/fear/panic related fields
+                        if (field.Name.IndexOf("afraid", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            field.Name.IndexOf("fear", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            field.Name.IndexOf("panic", StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            if (field.FieldType == typeof(bool))
+                                field.SetValue(npc, false);
+                            else if (field.FieldType == typeof(float))
+                                field.SetValue(npc, 0f);
+                        }
+                    }
+                    catch { }
                 }
-                catch { }
+
+                // Clear properties
+                PropertyInfo[] props = type.GetProperties(flags);
+                foreach (var prop in props)
+                {
+                    try
+                    {
+                        if ((prop.Name.IndexOf("flee", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                             prop.Name.IndexOf("afraid", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                             prop.Name.IndexOf("fear", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                             prop.Name.IndexOf("panic", StringComparison.OrdinalIgnoreCase) >= 0) &&
+                            prop.CanWrite)
+                        {
+                            if (prop.PropertyType == typeof(bool))
+                                prop.SetValue(npc, false, null);
+                            else if (prop.PropertyType == typeof(float))
+                                prop.SetValue(npc, 0f, null);
+                        }
+                    }
+                    catch { }
+                }
             }
 
-            var usePanicToFleeField = type.GetField("usePanicToFlee", flags);
-            if (usePanicToFleeField != null)
-            {
-                try
-                {
-                    usePanicToFleeField.SetValue(npc, false);
-                }
-                catch { }
-            }
+            // Clear afraid NPC Facts
+            TryClearNpcFact(npc, "IsAfraid");
+            TryClearNpcFact(npc, "Afraid");
 
-            // If there is a "fleeIfHurt" or similar boolean, turn it off too.
-            var fleeIfHurtField = type.GetField("fleeIfHurt", flags);
-            if (fleeIfHurtField != null)
-            {
-                try
-                {
-                    fleeIfHurtField.SetValue(npc, false);
-                }
-                catch { }
-            }
-
-            // We don't strictly need a network update for AI flags,
-            // but it is safe to send one in case any networked state changed.
             npc.SendNetworkUpdate();
-
-            Dbg($"DisableFleeForBoss applied to {npc.ShortPrefabName} ({npc.net?.ID})");
         }
 
         #endregion
