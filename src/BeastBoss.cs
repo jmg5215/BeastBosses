@@ -1924,7 +1924,7 @@ namespace Oxide.Plugins
                 if (TryGetNearestBossForPlayer(player, out var boss, out var def))
                 {
                     var title = BuildTitle(def, boss);
-                    var bossId = boss.net?.ID.Value ?? 0u;
+                    var bossId = NetId(boss);
 
                     // Compute enrage countdown and pulse flag if applicable
                     string enrageText = null;
@@ -2451,7 +2451,7 @@ namespace Oxide.Plugins
             }
 
             // Use mythic display name if applicable
-            var displayName = GetBossDisplayName(entity.net.ID.Value, def.DisplayName);
+            var displayName = GetBossDisplayName(NetId(entity), def.DisplayName);
             AnnounceNearby(entity.transform.position, $"<color=#ffdd66>{displayName}</color> has appeared!");
 
             return entity;
@@ -2735,7 +2735,7 @@ namespace Oxide.Plugins
 
             if (UnityEngine.Random.value > Mathf.Clamp01(_config.Mythic.Chance)) return;
 
-            var bossId = boss.net.ID.Value;
+            var bossId = NetId(boss);
             _mythicBossIds.Add(bossId);
 
             var name = $"{_config.Mythic.NamePrefix}{def.DisplayName}{_config.Mythic.NameSuffix}";
@@ -3369,7 +3369,7 @@ namespace Oxide.Plugins
                 if (!_plugin._config.WeatherProcs.Enabled) return;
 
                 // Get runtime theme (includes mythic overrides)
-                var theme = _plugin.GetBossTheme(_entity.net.ID.Value, _def.Theme);
+                var theme = _plugin.GetBossTheme(_plugin.NetId(_entity), _def.Theme);
 
                 // Check theme filter
                 if (_plugin._config.WeatherProcs.StormThemeOnly && theme != "storm")
@@ -3594,9 +3594,9 @@ namespace Oxide.Plugins
                     Effect.server.Run(fx, pos);
 
                 // Mythic enrage FX overlay with runtime theme
-                if (_entity?.net != null && _plugin._mythicBossIds.Contains(_entity.net.ID.Value))
+                if (_entity?.net != null && _plugin._mythicBossIds.Contains(_plugin.NetId(_entity)))
                 {
-                    var theme = _plugin.GetBossTheme(_entity.net.ID.Value, _def.Theme);
+                    var theme = _plugin.GetBossTheme(_plugin.NetId(_entity), _def.Theme);
                     var key = string.IsNullOrEmpty(_plugin._config.Mythic.EnrageFxKey) ? "enrage_aura" : _plugin._config.Mythic.EnrageFxKey;
                     var mythicFx = _plugin.GetRandomFx(key, null, theme);
                     if (!string.IsNullOrEmpty(mythicFx))
