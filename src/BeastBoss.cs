@@ -1981,13 +1981,49 @@ namespace Oxide.Plugins
         private uint NetId(BaseEntity ent)
         {
             if (ent == null || ent.net == null) return 0u;
-            try { return (uint)ent.net.ID.Value; } catch { return 0u; }
+
+            try
+            {
+                var idObj = ent.net.ID; // could be uint OR NetworkableId
+                if (idObj is uint u) return u;
+
+                // If it's a struct like NetworkableId, try to read property "Value"
+                var t = idObj.GetType();
+                var p = t.GetProperty("Value", BindingFlags.Instance | BindingFlags.Public);
+                if (p != null && p.PropertyType == typeof(uint))
+                    return (uint)p.GetValue(idObj, null);
+
+                // fallback: try ToString parse (last resort)
+                uint parsed;
+                if (uint.TryParse(idObj.ToString(), out parsed)) return parsed;
+            }
+            catch { }
+
+            return 0u;
         }
 
         private uint NetId(BaseNetworkable net)
         {
             if (net == null || net.net == null) return 0u;
-            try { return (uint)net.net.ID.Value; } catch { return 0u; }
+
+            try
+            {
+                var idObj = net.net.ID; // could be uint OR NetworkableId
+                if (idObj is uint u) return u;
+
+                // If it's a struct like NetworkableId, try to read property "Value"
+                var t = idObj.GetType();
+                var p = t.GetProperty("Value", BindingFlags.Instance | BindingFlags.Public);
+                if (p != null && p.PropertyType == typeof(uint))
+                    return (uint)p.GetValue(idObj, null);
+
+                // fallback: try ToString parse (last resort)
+                uint parsed;
+                if (uint.TryParse(idObj.ToString(), out parsed)) return parsed;
+            }
+            catch { }
+
+            return 0u;
         }
         // ==================== END NETWORK ID HELPERS ====================
 
@@ -2604,7 +2640,7 @@ namespace Oxide.Plugins
             container.GiveUID();
 
             // Check if this boss was a mythic variant for loot multiplier
-            bool isMythic = _mythicBossIds.Contains(bossId.Value);
+            bool isMythic = _mythicBossIds.Contains(bossId);
             float lootMultiplier = isMythic ? _config.Mythic.LootMultiplier : 1.0f;
 
             foreach (var entry in def.Loot)
@@ -2758,7 +2794,7 @@ namespace Oxide.Plugins
 
         private string BuildTitle(BeastDef def, BaseEntity boss)
         {
-            var netId = boss?.net?.ID.Value ?? 0u;
+            var netId = boss != null ? NetId(boss) : 0u;
             var name = boss != null ? GetBossDisplayName(netId, def.DisplayName) : def.DisplayName;
             var subtitle = GetBossSubtitle(def, netId);
             return (_config.TitlePlate.TitleFormat ?? "{name}, {subtitle}")
