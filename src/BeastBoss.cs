@@ -1160,7 +1160,7 @@ namespace Oxide.Plugins
             // Outgoing damage from boss
             if (info.Initiator != null && _bosses.Contains(info.Initiator))
             {
-                var initiatorId = info.Initiator.net.ID;
+                uint initiatorId = NetId(info.Initiator);
                 float mult = 1f;
                 if (_bossDamageMultipliers.TryGetValue(initiatorId, out var m))
                     mult = m;
@@ -1804,7 +1804,7 @@ namespace Oxide.Plugins
             foreach (var kvp in _bossMarkers.ToArray())
             {
                 var bossId = kvp.Key;
-                bool stillExists = _bosses.Any(b => b != null && !b.IsDestroyed && b.net != null && b.net.ID == bossId);
+                bool stillExists = _bosses.Any(b => b != null && !b.IsDestroyed && b.net != null && NetId(b) == bossId);
                 if (!stillExists)
                 {
                     var marker = kvp.Value;
