@@ -15,7 +15,7 @@ namespace Oxide.Plugins
     {
         #region Config
 
-        private ConfigData _config;
+        internal ConfigData _config;
 
         public class ConfigData
         {
@@ -188,6 +188,258 @@ namespace Oxide.Plugins
                         new LootEntry { ShortName = "wolfmeat", Amount = 10, Skin = 0 },
                         new LootEntry { ShortName = "scrap", Amount = 80, Skin = 0 }
                     }
+                },
+
+                ["storm_wolf"] = new BeastDef
+                {
+                    DisplayName = "Stormfang Alpha",
+                    TierId = "T2",
+                    Theme = "storm",
+                    Prefab = "assets/rust.ai/agents/wolf/wolf.prefab",
+                    BaseHealth = 2200f,
+                    DamageMultiplier = 1.45f,
+                    InitialScale = 1.0f,
+                    EnragedScale = 1.0f,
+
+                    PhaseScales = new List<PhaseScale>
+                    {
+                        new PhaseScale { HealthFraction = 0.50f, Scale = 1.0f },
+                        new PhaseScale { HealthFraction = 0.25f, Scale = 1.0f }
+                    },
+
+                    AbilityRoar = new RoarSettings
+                    {
+                        Enabled = true,
+                        Interval = 12f,
+                        Radius = 10f,
+                        Damage = 9f,
+                        Bleed = 6f,
+                        ScreenShake = 1.6f
+                    },
+
+                    AbilityCharge = new ChargeSettings
+                    {
+                        Enabled = true,
+                        Interval = 14f,
+                        Range = 26f,
+                        ImpactRadius = 2.8f,
+                        ImpactDamage = 38f,
+                        ChargeForce = 16f
+                    },
+
+                    AbilityFrostAura = new FrostAuraSettings
+                    {
+                        Enabled = false,
+                        Interval = 16f,
+                        Radius = 9f,
+                        Duration = 4f,
+                        TickRate = 1f,
+                        DamagePerTick = 0f,
+                        ColdPerTick = 0f
+                    },
+
+                    AbilityCubSummon = new CubSummonSettings
+                    {
+                        Enabled = true,
+                        TriggerHealthFraction = 0.45f,
+                        Count = 2,
+                        Prefab = "assets/rust.ai/agents/wolf/wolf.prefab",
+                        Radius = 8f
+                    },
+
+                    AbilityEnrage = new EnrageSettings
+                    {
+                        Enabled = true,
+                        TriggerHealthFraction = 0.30f,
+                        DamageMultiplier = 1.8f,
+                        SpeedMultiplier = 1.55f,
+                        EffectPrefab = null
+                    },
+
+                    AbilityFireTrail = new FireTrailSettings
+                    {
+                        Enabled = false,
+                        Interval = 18f,
+                        Duration = 4f,
+                        Step = 0.7f,
+                        Radius = 3f,
+                        DamagePerStep = 0f
+                    },
+
+                    Loot = new List<LootEntry>
+                    {
+                        new LootEntry { ShortName = "scrap", Amount = 180, Skin = 0 },
+                        new LootEntry { ShortName = "metal.fragments", Amount = 350, Skin = 0 },
+                        new LootEntry { ShortName = "wolfmeat", Amount = 15, Skin = 0 }
+                    }
+                },
+
+                ["plague_boar"] = new BeastDef
+                {
+                    DisplayName = "Plague Tusk",
+                    TierId = "T2",
+                    Theme = "toxic",
+                    Prefab = "assets/rust.ai/agents/boar/boar.prefab",
+                    BaseHealth = 2000f,
+                    DamageMultiplier = 1.35f,
+                    InitialScale = 1.0f,
+                    EnragedScale = 1.0f,
+
+                    PhaseScales = new List<PhaseScale>
+                    {
+                        new PhaseScale { HealthFraction = 0.60f, Scale = 1.0f },
+                        new PhaseScale { HealthFraction = 0.30f, Scale = 1.0f }
+                    },
+
+                    AbilityRoar = new RoarSettings
+                    {
+                        Enabled = true,
+                        Interval = 16f,
+                        Radius = 9f,
+                        Damage = 8f,
+                        Bleed = 8f,
+                        ScreenShake = 1.2f
+                    },
+
+                    AbilityCharge = new ChargeSettings
+                    {
+                        Enabled = true,
+                        Interval = 18f,
+                        Range = 22f,
+                        ImpactRadius = 3.2f,
+                        ImpactDamage = 34f,
+                        ChargeForce = 14f
+                    },
+
+                    AbilityFrostAura = new FrostAuraSettings
+                    {
+                        Enabled = true,
+                        Interval = 16f,
+                        Radius = 10f,
+                        Duration = 5f,
+                        TickRate = 1f,
+                        DamagePerTick = 6f,
+                        ColdPerTick = 0f
+                    },
+
+                    AbilityCubSummon = new CubSummonSettings
+                    {
+                        Enabled = true,
+                        TriggerHealthFraction = 0.50f,
+                        Count = 2,
+                        Prefab = "assets/rust.ai/agents/boar/boar.prefab",
+                        Radius = 7f
+                    },
+
+                    AbilityEnrage = new EnrageSettings
+                    {
+                        Enabled = true,
+                        TriggerHealthFraction = 0.28f,
+                        DamageMultiplier = 1.75f,
+                        SpeedMultiplier = 1.45f,
+                        EffectPrefab = null
+                    },
+
+                    AbilityFireTrail = new FireTrailSettings
+                    {
+                        Enabled = false,
+                        Interval = 18f,
+                        Duration = 4f,
+                        Step = 0.7f,
+                        Radius = 3f,
+                        DamagePerStep = 0f
+                    },
+
+                    Loot = new List<LootEntry>
+                    {
+                        new LootEntry { ShortName = "scrap", Amount = 150, Skin = 0 },
+                        new LootEntry { ShortName = "leather", Amount = 140, Skin = 0 },
+                        new LootEntry { ShortName = "boarmeat", Amount = 18, Skin = 0 }
+                    }
+                },
+
+                ["shade_stag"] = new BeastDef
+                {
+                    DisplayName = "Shadehorn",
+                    TierId = "T2",
+                    Theme = "shadow",
+                    Prefab = "assets/rust.ai/agents/stag/stag.prefab",
+                    BaseHealth = 1800f,
+                    DamageMultiplier = 1.25f,
+                    InitialScale = 1.0f,
+                    EnragedScale = 1.0f,
+
+                    PhaseScales = new List<PhaseScale>
+                    {
+                        new PhaseScale { HealthFraction = 0.50f, Scale = 1.0f },
+                        new PhaseScale { HealthFraction = 0.20f, Scale = 1.0f }
+                    },
+
+                    AbilityRoar = new RoarSettings
+                    {
+                        Enabled = true,
+                        Interval = 18f,
+                        Radius = 11f,
+                        Damage = 6f,
+                        Bleed = 10f,
+                        ScreenShake = 1.8f
+                    },
+
+                    AbilityCharge = new ChargeSettings
+                    {
+                        Enabled = true,
+                        Interval = 16f,
+                        Range = 24f,
+                        ImpactRadius = 3.0f,
+                        ImpactDamage = 28f,
+                        ChargeForce = 15f
+                    },
+
+                    AbilityFrostAura = new FrostAuraSettings
+                    {
+                        Enabled = false,
+                        Interval = 16f,
+                        Radius = 9f,
+                        Duration = 4f,
+                        TickRate = 1f,
+                        DamagePerTick = 0f,
+                        ColdPerTick = 0f
+                    },
+
+                    AbilityCubSummon = new CubSummonSettings
+                    {
+                        Enabled = true,
+                        TriggerHealthFraction = 0.45f,
+                        Count = 3,
+                        Prefab = "assets/rust.ai/agents/wolf/wolf.prefab",
+                        Radius = 9f
+                    },
+
+                    AbilityEnrage = new EnrageSettings
+                    {
+                        Enabled = true,
+                        TriggerHealthFraction = 0.22f,
+                        DamageMultiplier = 1.6f,
+                        SpeedMultiplier = 1.6f,
+                        EffectPrefab = null
+                    },
+
+                    AbilityFireTrail = new FireTrailSettings
+                    {
+                        Enabled = false,
+                        Interval = 18f,
+                        Duration = 4f,
+                        Step = 0.7f,
+                        Radius = 3f,
+                        DamagePerStep = 0f
+                    },
+
+                    Loot = new List<LootEntry>
+                    {
+                        new LootEntry { ShortName = "scrap", Amount = 130, Skin = 0 },
+                        new LootEntry { ShortName = "cloth", Amount = 120, Skin = 0 },
+                        new LootEntry { ShortName = "deermeat.raw", Amount = 14, Skin = 0 }
+                    }
                 }
             };
 
@@ -218,8 +470,20 @@ namespace Oxide.Plugins
             // If false, only InitialScale and EnragedScale are applied.
             public bool UsePhaseScaling = false;
 
+            // Enable debug logging for boss lifecycle events (spawn, enrage, summon, etc).
+            public bool Debug = false;
+
             // Boss HUD config (roughly compatible look with TargetHealthHUD)
             public UiConfig Ui = new UiConfig();
+
+            // Chat announcements on boss spawn/enrage/death
+            public AnnouncementSettings Announcements = new AnnouncementSettings();
+
+            // World map markers that follow active bosses
+            public MarkerSettings Markers = new MarkerSettings();
+
+            // Proximity-based warnings to nearby players
+            public ProximityWarningSettings ProximityWarnings = new ProximityWarningSettings();
 
             /*
              * FX Library keys and usage:
@@ -293,6 +557,44 @@ namespace Oxide.Plugins
             // Slightly below your TargetHealthHUD default so they don't overlap perfectly
             public string AnchorMin = "0.3297916 0.88";
             public string AnchorMax = "0.6683334 0.91";
+        }
+
+        public class AnnouncementSettings
+        {
+            public bool Enabled = true;
+            public bool AnnounceSpawn = true;
+            public bool AnnounceEnrage = true;
+            public bool AnnounceDeath = true;
+
+            public string SpawnMessage = "<color=#ffcc00>[BeastBoss]</color> <color=#ff5555>{name}</color> has appeared at <color=#aaddff>{grid}</color>!";
+            public string EnrageMessage = "<color=#ffcc00>[BeastBoss]</color> <color=#ff5555>{name}</color> is <color=#ff0000>ENRAGED</color>!";
+            public string DeathMessage = "<color=#ffcc00>[BeastBoss]</color> <color=#ff5555>{name}</color> was defeated by <color=#aaffaa>{killer}</color>!";
+        }
+
+        public class MarkerSettings
+        {
+            public bool Enabled = true;
+            public float Radius = 0.25f;
+            public float Alpha = 0.65f;
+            public string Color = "#ff4444";
+            public bool ShowLabel = true;
+            public float UpdateIntervalSeconds = 3f;
+        }
+
+        public class ProximityWarningSettings
+        {
+            public bool Enabled = true;
+            public float RadiusMeters = 120f;
+
+            public bool WarnOnSpawn = true;
+            public bool WarnOnEnrage = true;
+            public bool WarnOnDeath = false;
+
+            public string SpawnMessage = "<color=#ffcc00>[Warning]</color> A BeastBoss (<color=#ff5555>{name}</color>) has spawned nearby!";
+            public string EnrageMessage = "<color=#ffcc00>[Warning]</color> <color=#ff5555>{name}</color> is <color=#ff0000>ENRAGED</color> nearby!";
+            public string DeathMessage = "<color=#ffcc00>[Info]</color> Nearby BeastBoss (<color=#ff5555>{name}</color>) has been defeated.";
+
+            public float PlayerCooldownSeconds = 20f;
         }
 
         public class TierConfig
@@ -472,6 +774,10 @@ namespace Oxide.Plugins
         private readonly Dictionary<ulong, Timer> _hudUpdateTimers = new Dictionary<ulong, Timer>();
         private readonly Dictionary<ulong, Timer> _hudExpireTimers = new Dictionary<ulong, Timer>();
 
+        // Marker update timer and proximity warning cooldowns
+        private Timer _markerUpdateTimer;
+        private readonly Dictionary<ulong, float> _proximityCooldown = new Dictionary<ulong, float>();
+
         private void LoadData()
         {
             try
@@ -503,6 +809,10 @@ namespace Oxide.Plugins
             permission.RegisterPermission(_config.PermissionAdmin, this);
             LoadData();
             StartAutoSpawnTimer();
+
+            // Start marker update timer
+            if (_markerUpdateTimer == null && _config.Markers.Enabled)
+                _markerUpdateTimer = timer.Every(Mathf.Max(1f, _config.Markers.UpdateIntervalSeconds), UpdateBossMarkers);
         }
 
         private void Unload()
@@ -531,6 +841,13 @@ namespace Oxide.Plugins
             _activeBossByTier.Clear();
             _bossTierById.Clear();
             _bossMarkers.Clear();
+            _proximityCooldown.Clear();
+
+            if (_markerUpdateTimer != null)
+            {
+                _markerUpdateTimer.Destroy();
+                _markerUpdateTimer = null;
+            }
 
             foreach (var userId in _suspendedExternalHud.ToList())
             {
@@ -654,12 +971,33 @@ namespace Oxide.Plugins
             string tierId = def.TierId;
             var now = Interface.Oxide.Now;
 
+            // Get killer name for announcements
+            BasePlayer killer = info?.InitiatorPlayer;
+            string killerName = killer != null ? killer.displayName : "unknown";
+
+            // Remove world map marker
+            RemoveBossMarker(entity);
+
             if (!string.IsNullOrEmpty(tierId))
             {
                 if (_activeBossByTier.TryGetValue(tierId, out var existing) && existing == entity)
                     _activeBossByTier.Remove(tierId);
 
                 _tierLastDeathTime[tierId] = now;
+            }
+
+            // Announcement on death
+            if (_config.Announcements.Enabled && _config.Announcements.AnnounceDeath)
+            {
+                var deathMsg = FormatMessage(_config.Announcements.DeathMessage, def, entity, killerName);
+                AnnounceToChat(deathMsg);
+            }
+
+            // Proximity warning on death
+            if (_config.ProximityWarnings.Enabled && _config.ProximityWarnings.WarnOnDeath)
+            {
+                var warnMsg = FormatMessage(_config.ProximityWarnings.DeathMessage, def, entity, killerName);
+                WarnPlayersNear(entity.transform.position, _config.ProximityWarnings.RadiusMeters, warnMsg);
             }
 
             AnnounceNearby(entity.transform.position, $"{def.DisplayName} has been slain!");
@@ -919,6 +1257,144 @@ namespace Oxide.Plugins
             }
         }
 
+        private string GetGrid(Vector3 pos)
+        {
+            try
+            {
+                return PhoneController.PositionToGridCoord(pos);
+            }
+            catch
+            {
+                return "unknown";
+            }
+        }
+
+        private string FormatMessage(string template, BeastDef def, BaseEntity boss, string killerName = null)
+        {
+            if (template == null) return "";
+
+            string message = template;
+            message = message.Replace("{name}", def != null ? def.DisplayName : "Unknown");
+            message = message.Replace("{grid}", boss != null ? GetGrid(boss.transform.position) : "unknown");
+            message = message.Replace("{killer}", !string.IsNullOrEmpty(killerName) ? killerName : "unknown");
+            return message;
+        }
+
+        private void AnnounceToChat(string message)
+        {
+            if (!_config.Announcements.Enabled) return;
+            if (string.IsNullOrEmpty(message)) return;
+            Server.Broadcast(message);
+        }
+
+        private void WarnPlayersNear(Vector3 pos, float radius, string message)
+        {
+            if (!_config.ProximityWarnings.Enabled) return;
+            if (string.IsNullOrEmpty(message)) return;
+
+            var now = Time.realtimeSinceStartup;
+
+            foreach (var player in BasePlayer.activePlayerList)
+            {
+                if (player == null || !player.IsConnected) continue;
+
+                float distance = Vector3.Distance(pos, player.transform.position);
+                if (distance > radius) continue;
+
+                // Check player cooldown
+                float lastWarn;
+                if (_proximityCooldown.TryGetValue(player.userID, out lastWarn))
+                {
+                    if (now - lastWarn < _config.ProximityWarnings.PlayerCooldownSeconds)
+                        continue;
+                }
+
+                _proximityCooldown[player.userID] = now;
+                player.ChatMessage(message);
+            }
+        }
+
+        private void CreateBossMarker(BaseEntity boss, BeastDef def)
+        {
+            if (!_config.Markers.Enabled || boss == null || boss.IsDestroyed) return;
+
+            RemoveBossMarker(boss);
+
+            var marker = GameManager.server.CreateEntity("assets/prefabs/tools/map/genericradiusmarker.prefab", boss.transform.position, Quaternion.identity);
+            if (marker == null) return;
+
+            marker.Spawn();
+
+            try
+            {
+                var radiusMarker = marker as MapMarkerGenericRadius;
+                if (radiusMarker != null)
+                {
+                    radiusMarker.alpha = _config.Markers.Alpha;
+                    radiusMarker.color1 = ParseColor(_config.Markers.Color);
+                    radiusMarker.radius = _config.Markers.Radius;
+                    if (_config.Markers.ShowLabel && def != null)
+                        radiusMarker.SetLabel(def.DisplayName);
+                    radiusMarker.SendUpdate();
+                }
+            }
+            catch { }
+
+            _bossMarkers[boss.net.ID] = marker as MapMarkerGenericRadius;
+        }
+
+        private void RemoveBossMarker(BaseEntity boss)
+        {
+            if (boss == null || boss.net == null) return;
+
+            MapMarkerGenericRadius marker;
+            if (_bossMarkers.TryGetValue(boss.net.ID, out marker))
+            {
+                _bossMarkers.Remove(boss.net.ID);
+                if (marker != null && !marker.IsDestroyed) marker.Kill();
+            }
+        }
+
+        private void UpdateBossMarkers()
+        {
+            if (!_config.Markers.Enabled) return;
+
+            foreach (var boss in _bosses.ToArray())
+            {
+                if (boss == null || boss.IsDestroyed)
+                    continue;
+
+                MapMarkerGenericRadius marker;
+                if (_bossMarkers.TryGetValue(boss.net.ID, out marker))
+                {
+                    if (marker == null || marker.IsDestroyed) continue;
+                    marker.transform.position = boss.transform.position;
+                    marker.SendNetworkUpdate();
+                }
+            }
+
+            // Clean up markers that no longer have an active boss
+            foreach (var kvp in _bossMarkers.ToArray())
+            {
+                var bossId = kvp.Key;
+                bool stillExists = _bosses.Any(b => b != null && !b.IsDestroyed && b.net != null && b.net.ID == bossId);
+                if (!stillExists)
+                {
+                    var marker = kvp.Value;
+                    _bossMarkers.Remove(bossId);
+                    if (marker != null && !marker.IsDestroyed) marker.Kill();
+                }
+            }
+        }
+
+        private Color ParseColor(string hex)
+        {
+            if (string.IsNullOrEmpty(hex)) return Color.red;
+            Color c;
+            if (ColorUtility.TryParseHtmlString(hex, out c)) return c;
+            return Color.red;
+        }
+
         private BaseEntity SpawnBeast(BeastDef def, Vector3 pos)
         {
             var entity = GameManager.server.CreateEntity(def.Prefab, pos, Quaternion.identity, true);
@@ -943,6 +1419,8 @@ namespace Oxide.Plugins
             _beastDefs[entity.net.ID] = def;
             _bossDamageMultipliers[entity.net.ID] = def.DamageMultiplier;
 
+            Dbg($"Spawned boss '{def.DisplayName}' prefab='{entity.ShortPrefabName}' id={entity.net.ID} pos={pos}");
+
             if (!string.IsNullOrEmpty(def.TierId))
             {
                 _activeBossByTier[def.TierId] = entity;
@@ -950,20 +1428,21 @@ namespace Oxide.Plugins
                 _tierLastDeathTime[def.TierId] = Interface.Oxide.Now;
             }
 
-            var marker = GameManager.server.CreateEntity(
-                "assets/prefabs/tools/map/genericradiusmarker.prefab",
-                pos,
-                Quaternion.identity,
-                true
-            ) as MapMarkerGenericRadius;
+            // Create world map marker
+            CreateBossMarker(entity, def);
 
-            if (marker != null)
+            // Announcement on spawn
+            if (_config.Announcements.Enabled && _config.Announcements.AnnounceSpawn)
             {
-                marker.alpha = 1f;
-                marker.radius = 0.5f;
-                marker.color1 = Color.red;
-                marker.Spawn();
-                _bossMarkers[entity.net.ID] = marker;
+                var spawnMsg = FormatMessage(_config.Announcements.SpawnMessage, def, entity);
+                AnnounceToChat(spawnMsg);
+            }
+
+            // Proximity warning on spawn
+            if (_config.ProximityWarnings.Enabled && _config.ProximityWarnings.WarnOnSpawn)
+            {
+                var warnMsg = FormatMessage(_config.ProximityWarnings.SpawnMessage, def, entity);
+                WarnPlayersNear(entity.transform.position, _config.ProximityWarnings.RadiusMeters, warnMsg);
             }
 
             AnnounceNearby(entity.transform.position, $"<color=#ffdd66>{def.DisplayName}</color> has appeared!");
@@ -1084,6 +1563,12 @@ namespace Oxide.Plugins
             return fallback;
         }
 
+        private void Dbg(string msg)
+        {
+            if (_config == null || !_config.Debug) return;
+            Puts($"[BeastBoss][DBG] {msg}");
+        }
+
         private void ScaleBeastEntity(BaseEntity entity, float scale)
         {
             // Entity scaling is currently disabled; this is left as a no-op
@@ -1147,6 +1632,8 @@ namespace Oxide.Plugins
             // We don't strictly need a network update for AI flags,
             // but it is safe to send one in case any networked state changed.
             npc.SendNetworkUpdate();
+
+            Dbg($"DisableFleeForBoss applied to {npc.ShortPrefabName} ({npc.net?.ID})");
         }
 
         #endregion
@@ -1549,6 +2036,8 @@ namespace Oxide.Plugins
                     // Ensure summoned helpers never flee
                     _plugin.DisableFleeForBoss(child);
 
+                    _plugin.Dbg($"Summoned helper prefab='{child.ShortPrefabName}' id={child.net.ID} pos={spawnPos} for boss='{_def.DisplayName}' bossId={_entity.net.ID}");
+
                     var childCombat = child as BaseCombatEntity;
                     if (childCombat != null)
                     {
@@ -1569,6 +2058,22 @@ namespace Oxide.Plugins
                 var s = _def.AbilityEnrage;
 
                 _plugin.ApplyEnrageBuff(_entity, _def);
+
+                _plugin.Dbg($"Enrage triggered for '{_def.DisplayName}' prefab='{_entity.ShortPrefabName}' id={_entity.net.ID} hp={_combat?.health}/{_def.BaseHealth}");
+
+                // Announcement on enrage
+                if (_plugin._config.Announcements.Enabled && _plugin._config.Announcements.AnnounceEnrage)
+                {
+                    var enrageMsg = _plugin.FormatMessage(_plugin._config.Announcements.EnrageMessage, _def, _entity);
+                    _plugin.AnnounceToChat(enrageMsg);
+                }
+
+                // Proximity warning on enrage
+                if (_plugin._config.ProximityWarnings.Enabled && _plugin._config.ProximityWarnings.WarnOnEnrage)
+                {
+                    var warnMsg = _plugin.FormatMessage(_plugin._config.ProximityWarnings.EnrageMessage, _def, _entity);
+                    _plugin.WarnPlayersNear(_entity.transform.position, _plugin._config.ProximityWarnings.RadiusMeters, warnMsg);
+                }
 
                 // Start visual enrage aura for the duration of the enrage effect.
                 StartEnrageAura(s.Duration);
