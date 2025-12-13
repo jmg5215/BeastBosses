@@ -986,6 +986,10 @@ namespace Oxide.Plugins
         private readonly Dictionary<uint, string> _runtimeBossName = new Dictionary<uint, string>();
         private readonly Dictionary<uint, string> _runtimeBossTheme = new Dictionary<uint, string>();
 
+        // Last attacker tracking for target acquisition (when npc.Target unavailable)
+        private readonly Dictionary<uint, ulong> _lastAttacker = new Dictionary<uint, ulong>();
+        private readonly Dictionary<uint, float> _lastAttackerAt = new Dictionary<uint, float>();
+
         // Title plate (CUI overlay) timer
         private Timer _titlePlateTimer;
 
@@ -1072,6 +1076,8 @@ namespace Oxide.Plugins
             _mythicBossIds.Clear();
             _runtimeBossName.Clear();
             _runtimeBossTheme.Clear();
+            _lastAttacker.Clear();
+            _lastAttackerAt.Clear();
 
             if (_markerUpdateTimer != null)
             {
@@ -1177,6 +1183,14 @@ namespace Oxide.Plugins
                 var tierId = def != null ? def.TierId : null;
 
                 var initiatorPlayer = info.InitiatorPlayer;
+                
+                // Track last attacker for target acquisition fallback
+                if (bossId != 0 && initiatorPlayer != null)
+                {
+                    _lastAttacker[bossId] = initiatorPlayer.userID;
+                    _lastAttackerAt[bossId] = Time.realtimeSinceStartup;
+                }
+                
                 if (initiatorPlayer != null && !string.IsNullOrEmpty(tierId))
                 {
                     if (IsPlayerLockedOut(initiatorPlayer.userID, tierId, out var remainingSeconds))
@@ -1349,6 +1363,8 @@ namespace Oxide.Plugins
             }
             _bossMarkers.Remove(bossId);
             _bossTierById.Remove(bossId);
+            _lastAttacker.Remove(bossId);
+            _lastAttackerAt.Remove(bossId);
 
             // Clear HUD for any players tracking this boss
             ClearHudForBoss(entity);
@@ -2387,14 +2403,58 @@ namespace Oxide.Plugins
             Dbg($"Lightning proc triggered at {strikePos} targeting {target.displayName} for {damage} damage");
         }
 
+        private BasePlayer GetBestTargetPlayer(BaseEntity boss, float maxRadius = 80f)
+        {
+            if (boss == null || boss.IsDestroyed) return null;
+
+            var bossId = NetId(boss);
+            var now = Time.realtimeSinceStartup;
+
+            // 1) last attacker within window
+            if (bossId != 0 && _lastAttacker.TryGetValue(bossId, out var uid))
+            {
+                float at;
+                if (_lastAttackerAt.TryGetValue(bossId, out at))
+                {
+                    if ((now - at) <= 30f) // 30 second window
+                    {
+                        var p = BasePlayer.FindByID(uid);
+                        if (p != null && p.IsConnected && !p.IsDead())
+                        {
+                            if ((p.transform.position - boss.transform.position).sqrMagnitude <= (maxRadius * maxRadius))
+                                return p;
+                        }
+                    }
+                }
+            }
+
+            // 2) nearest active player
+            BasePlayer best = null;
+            float bestSqr = float.MaxValue;
+            float maxSqr = maxRadius * maxRadius;
+
+            foreach (var p in BasePlayer.activePlayerList)
+            {
+                if (p == null || !p.IsConnected || p.IsDead()) continue;
+                float ds = (p.transform.position - boss.transform.position).sqrMagnitude;
+                if (ds <= maxSqr && ds < bestSqr)
+                {
+                    bestSqr = ds;
+                    best = p;
+                }
+            }
+
+            return best;
+        }
+
         private BasePlayer GetPrimaryTarget(BaseEntity boss)
         {
             if (boss == null) return null;
 
-            // Try to get NPC's current target
-            var npc = boss as BaseNpc;
-            if (npc != null && npc.Target is BasePlayer player)
-                return player;
+            // Use build-safe target acquisition instead of npc.Target
+            var targetPlayer = GetBestTargetPlayer(boss, 20f);
+            if (targetPlayer != null)
+                return targetPlayer;
 
             // Fallback: find closest player within aggro range (20m estimate)
             var closestPlayer = BasePlayer.activePlayerList
