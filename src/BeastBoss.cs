@@ -1980,6 +1980,56 @@ namespace Oxide.Plugins
             try { return new NetworkableId(id); } catch { return default(NetworkableId); }
         }
 
+        private void TryClearNpcFact(BaseNpc npc, string factName)
+        {
+            if (npc == null || string.IsNullOrEmpty(factName)) return;
+
+            try
+            {
+                // Find nested enum "Facts" on BaseNpc
+                var factsType = typeof(BaseNpc).GetNestedType("Facts", BindingFlags.Public | BindingFlags.NonPublic);
+                if (factsType == null || !factsType.IsEnum) return;
+
+                // Parse enum by name (case-insensitive)
+                object factValue = null;
+                foreach (var name in System.Enum.GetNames(factsType))
+                {
+                    if (string.Equals(name, factName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        factValue = System.Enum.Parse(factsType, name);
+                        break;
+                    }
+                }
+                if (factValue == null) return;
+
+                // Find SetFact method (varies by build)
+                var mi = npc.GetType().GetMethod("SetFact", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (mi == null) return;
+
+                // Try common overload patterns:
+                // SetFact(Facts fact, int value, bool force = false)
+                // SetFact(Facts fact, int value, bool force, bool netUpdate)
+                var parms = mi.GetParameters();
+
+                if (parms.Length == 2)
+                {
+                    mi.Invoke(npc, new object[] { factValue, 0 });
+                }
+                else if (parms.Length == 3)
+                {
+                    mi.Invoke(npc, new object[] { factValue, 0, true });
+                }
+                else if (parms.Length >= 4)
+                {
+                    mi.Invoke(npc, new object[] { factValue, 0, true, true });
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+        }
+
         private bool IsMythicBoss(uint id)
         {
             return _mythicBossIds != null && _mythicBossIds.Contains(id);
@@ -2180,9 +2230,12 @@ namespace Oxide.Plugins
             // Clear aggro / chasing (best-effort)
             if (npc != null)
             {
-                try { npc.SetFact(BaseNpc.Facts.IsAggro, 0, true, true); } catch { }
-                try { npc.SetFact(BaseNpc.Facts.IsChasing, 0, true, true); } catch { }
-                try { npc.SetFact(BaseNpc.Facts.IsAfraid, 0, true, true); } catch { }
+                TryClearNpcFact(npc, "IsAggro");
+                TryClearNpcFact(npc, "IsChasing");
+                TryClearNpcFact(npc, "IsAfraid");
+                try { npc.CancelInvoke(); } catch { }
+                try { npc.StopMoving(); } catch { }
+                try { npc.SetDucking(false); } catch { }
             }
 
             // Issue destination to spawn
@@ -2215,9 +2268,11 @@ namespace Oxide.Plugins
             var npc = boss as BaseNpc;
             if (npc != null)
             {
-                try { npc.SetFact(BaseNpc.Facts.IsAggro, 0, true, true); } catch { }
-                try { npc.SetFact(BaseNpc.Facts.IsAfraid, 0, true, true); } catch { }
-                try { npc.SetFact(BaseNpc.Facts.IsChasing, 0, true, true); } catch { }
+                TryClearNpcFact(npc, "IsAggro");
+                TryClearNpcFact(npc, "IsAfraid");
+                TryClearNpcFact(npc, "IsChasing");
+                try { npc.CancelInvoke(); } catch { }
+                try { npc.StopMoving(); } catch { }
             }
 
             Dbg($"Boss '{def.DisplayName}' completed return-to-spawn reset at spawn location");
@@ -2381,9 +2436,11 @@ namespace Oxide.Plugins
             var npc = boss as BaseNpc;
             if (npc != null)
             {
-                try { npc.SetFact(BaseNpc.Facts.IsAggro, 0, true, true); } catch { }
-                try { npc.SetFact(BaseNpc.Facts.IsAfraid, 0, true, true); } catch { }
-                try { npc.SetFact(BaseNpc.Facts.IsChasing, 0, true, true); } catch { }
+                TryClearNpcFact(npc, "IsAggro");
+                TryClearNpcFact(npc, "IsAfraid");
+                TryClearNpcFact(npc, "IsChasing");
+                try { npc.CancelInvoke(); } catch { }
+                try { npc.StopMoving(); } catch { }
             }
 
             Dbg($"Soft reset boss '{def.DisplayName}' prefab='{boss.ShortPrefabName}' id={boss.net.ID} back to spawn");
