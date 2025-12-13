@@ -2030,6 +2030,28 @@ namespace Oxide.Plugins
             }
         }
 
+        private void TryInvoke(BaseNpc npc, string methodName, params object[] args)
+        {
+            if (npc == null || string.IsNullOrEmpty(methodName)) return;
+
+            try
+            {
+                var t = npc.GetType();
+                // Find any method with matching name and arg count
+                var methods = t.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                foreach (var m in methods)
+                {
+                    if (!string.Equals(m.Name, methodName, StringComparison.OrdinalIgnoreCase)) continue;
+                    var ps = m.GetParameters();
+                    if (ps.Length != (args?.Length ?? 0)) continue;
+
+                    m.Invoke(npc, args);
+                    return;
+                }
+            }
+            catch { }
+        }
+
         private bool IsMythicBoss(uint id)
         {
             return _mythicBossIds != null && _mythicBossIds.Contains(id);
@@ -2233,9 +2255,9 @@ namespace Oxide.Plugins
                 TryClearNpcFact(npc, "IsAggro");
                 TryClearNpcFact(npc, "IsChasing");
                 TryClearNpcFact(npc, "IsAfraid");
-                try { npc.CancelInvoke(); } catch { }
-                try { npc.StopMoving(); } catch { }
-                try { npc.SetDucking(false); } catch { }
+                TryInvoke(npc, "CancelInvoke");
+                TryInvoke(npc, "StopMoving");
+                TryInvoke(npc, "SetDucking", false);
             }
 
             // Issue destination to spawn
@@ -2271,8 +2293,8 @@ namespace Oxide.Plugins
                 TryClearNpcFact(npc, "IsAggro");
                 TryClearNpcFact(npc, "IsAfraid");
                 TryClearNpcFact(npc, "IsChasing");
-                try { npc.CancelInvoke(); } catch { }
-                try { npc.StopMoving(); } catch { }
+                TryInvoke(npc, "CancelInvoke");
+                TryInvoke(npc, "StopMoving");
             }
 
             Dbg($"Boss '{def.DisplayName}' completed return-to-spawn reset at spawn location");
@@ -2439,8 +2461,8 @@ namespace Oxide.Plugins
                 TryClearNpcFact(npc, "IsAggro");
                 TryClearNpcFact(npc, "IsAfraid");
                 TryClearNpcFact(npc, "IsChasing");
-                try { npc.CancelInvoke(); } catch { }
-                try { npc.StopMoving(); } catch { }
+                TryInvoke(npc, "CancelInvoke");
+                TryInvoke(npc, "StopMoving");
             }
 
             Dbg($"Soft reset boss '{def.DisplayName}' prefab='{boss.ShortPrefabName}' id={boss.net.ID} back to spawn");
