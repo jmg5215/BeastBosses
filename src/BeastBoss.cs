@@ -1195,7 +1195,7 @@ namespace Oxide.Plugins
                 if (_config.Leash.Enabled)
                 {
                     BeastComponent comp;
-                    if (_bossComponents.TryGetValue(id, out comp))
+                    if (_bossComponents.TryGetValue(bossId, out comp))
                     {
                         // Even stronger reduction while returning (to prevent players from intercepting)
                         if (comp.IsReturning)
