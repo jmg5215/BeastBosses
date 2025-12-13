@@ -84,7 +84,7 @@ namespace Oxide.Plugins
                         TriggerHealthFraction = 0.3f,
                         DamageMultiplier = 1.6f,
                         SpeedMultiplier = 1.4f,
-                        EffectPrefab = "assets/bundled/prefabs/fx/gestures/flex.prefab"
+                        EffectPrefab = null
                     },
 
                     AbilityFireTrail = new FireTrailSettings
@@ -168,7 +168,7 @@ namespace Oxide.Plugins
                         TriggerHealthFraction = 0.25f,
                         DamageMultiplier = 1.7f,
                         SpeedMultiplier = 1.5f,
-                        EffectPrefab = "assets/bundled/prefabs/fx/gestures/howl.prefab"
+                        EffectPrefab = null
                     },
 
                     AbilityFireTrail = new FireTrailSettings
@@ -239,43 +239,41 @@ namespace Oxide.Plugins
                 // Generic categories used by abilities
                 ["roar_blast"] = new List<string>
                 {
-                    "assets/bundled/prefabs/fx/gestures/howl.prefab",
-                    "assets/bundled/prefabs/fx/dustwave.prefab"
+                    "assets/bundled/prefabs/fx/player/howl.prefab",
+                    "assets/bundled/prefabs/fx/impacts/additive/explosion.prefab"
                 },
                 ["fire_trail"] = new List<string>
                 {
-                    "assets/bundled/prefabs/fireball_small.prefab",
-                    "assets/bundled/prefabs/fireball_medium.prefab"
+                    "assets/bundled/prefabs/fx/fire/fire_v2.prefab",
+                    "assets/bundled/prefabs/fx/fire/fire_v3.prefab"
                 },
                 ["frost_aura"] = new List<string>
                 {
-                    "assets/bundled/prefabs/fx/hold_breath.prefab"
+                    "assets/bundled/prefabs/fx/smoke/generator_smoke.prefab"
                 },
                 ["toxic_aura"] = new List<string>
                 {
-                    "assets/content/effects/prefabs/poisoncloud.prefab",
-                    "assets/content/effects/prefabs/green_spores.prefab"
+                    "assets/bundled/prefabs/fx/smoke_cover_full.prefab"
                 },
                 ["ground_impact"] = new List<string>
                 {
-                    "assets/bundled/prefabs/fx/groundimpact.prefab",
-                    "assets/bundled/prefabs/fx/dustwave.prefab"
+                    "assets/bundled/prefabs/fx/explosions/explosion_01.prefab",
+                    "assets/bundled/prefabs/fx/impacts/blunt/dirt/dirt1.prefab"
                 },
                 ["enrage_burst"] = new List<string>
                 {
-                    "assets/bundled/prefabs/fx/gestures/flex.prefab",
-                    "assets/bundled/prefabs/fireball_small.prefab"
+                    "assets/bundled/prefabs/fx/explosions/explosion_core_flash.prefab",
+                    "assets/bundled/prefabs/fx/explosions/explosion_02.prefab"
                 },
                 ["enrage_aura"] = new List<string>
                 {
-                    "assets/bundled/prefabs/fireball_small.prefab",
-                    "assets/content/effects/prefabs/hot_spot_fire.prefab",
-                    "assets/bundled/prefabs/fx/dustwave.prefab"
+                    "assets/bundled/prefabs/fx/fire/fire_v2.prefab",
+                    "assets/bundled/prefabs/fx/smoke_signal.prefab"
                 },
                 ["summon_burst"] = new List<string>
                 {
-                    "assets/bundled/prefabs/fx/takeloot.prefab",
-                    "assets/bundled/prefabs/fx/item_pickup.prefab"
+                    "assets/bundled/prefabs/fx/impacts/additive/fire.prefab",
+                    "assets/bundled/prefabs/fx/explosions/explosion_01.prefab"
                 }
             };
         }
@@ -372,7 +370,7 @@ namespace Oxide.Plugins
             public float TriggerHealthFraction;
             public float DamageMultiplier;
             public float SpeedMultiplier;
-            public string EffectPrefab;
+            public string EffectPrefab = null;  // Falls back to FxLibrary "enrage_burst" if null
             public float Duration = 10f;  // Duration of enrage effect in seconds
         }
 
@@ -1380,7 +1378,7 @@ namespace Oxide.Plugins
                 var origin = _entity.transform.position + Vector3.up * 0.8f;
 
                 // Pick a random roar FX (or fallback)
-                var roarFx = _plugin.GetRandomFx("roar_blast", "assets/bundled/prefabs/fx/gestures/howl.prefab", _def.Theme);
+                var roarFx = _plugin.GetRandomFx("roar_blast", null, _def.Theme);
                 Effect.server.Run(roarFx, origin);
 
                 var players = GetPlayersInRange(origin, s.Radius);
@@ -1395,7 +1393,7 @@ namespace Oxide.Plugins
                     p.SendConsoleCommand("gametip.showtoast", "warning", "A terrifying roar rattles you!");
 
                     // Optional impact FX at player
-                    var impactFx = _plugin.GetRandomFx("ground_impact", "assets/bundled/prefabs/fx/impact/impact_concrete.prefab", _def.Theme);
+                    var impactFx = _plugin.GetRandomFx("ground_impact", null, _def.Theme);
                     Effect.server.Run(impactFx, p.transform.position);
                 }
             }
@@ -1440,7 +1438,7 @@ namespace Oxide.Plugins
                 var tickInterval = Mathf.Max(0.1f, s.TickRate);
 
                 var origin = _entity.transform.position + Vector3.up * 0.5f;
-                var castFx = _plugin.GetRandomFx("frost_aura", "assets/bundled/prefabs/fx/hold_breath.prefab", _def.Theme);
+                var castFx = _plugin.GetRandomFx("frost_aura", null, _def.Theme);
                 Effect.server.Run(castFx, origin);
 
                 _plugin.timer.Repeat(tickInterval, ticks, () =>
@@ -1489,7 +1487,7 @@ namespace Oxide.Plugins
                     }
 
                     Effect.server.Run(
-                        _plugin.GetRandomFx("summon_burst", "assets/bundled/prefabs/fx/takeloot.prefab", _def.Theme),
+                        _plugin.GetRandomFx("summon_burst", null, _def.Theme),
                         spawnPos
                     );
                 }
@@ -1527,7 +1525,7 @@ namespace Oxide.Plugins
 
                     var pos = _entity.transform.position;
 
-                    var trailFx = _plugin.GetRandomFx("fire_trail", "assets/bundled/prefabs/fireball_small.prefab", _def.Theme);
+                    var trailFx = _plugin.GetRandomFx("fire_trail", null, _def.Theme);
                     Effect.server.Run(trailFx, pos);
 
                     var players = GetPlayersInRange(pos, s.Radius);
