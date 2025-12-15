@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Oxide.Core;
+using Oxide.Core.Plugins;
 using UnityEngine;
 using Rust; // DamageType, MapMarkerGenericRadius, etc.
 using Oxide.Game.Rust.Cui;
