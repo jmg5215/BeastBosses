@@ -763,6 +763,14 @@ namespace Oxide.Plugins
             // {name} -> boss display name (supports mythic override)
             // {subtitle} -> generated subtitle based on Theme/TierId
             public string TitleFormat = "{name}, {subtitle}";
+
+            // Optional mini health bar rendered INSIDE the title plate (bottom strip)
+            public bool ShowHealthBar = true;
+            public string HealthBarAnchorMin = "0.02 0.05";
+            public string HealthBarAnchorMax = "0.98 0.22";
+            public string HealthBarBackColor = "0 0 0 0.35";
+            public string HealthBarFillColor = "0.8 0.1 0.1 0.9";
+            public float HealthBarBorderThickness = 0.06f; // relative to bar height (0..0.2)
         }
 
         public class EnrageIndicatorSettings
@@ -1394,20 +1402,31 @@ namespace Oxide.Plugins
                 // Clear HUD immediately
                 ClearHudForBoss(entity);
 
-                // Clean up tracking if not already done by OnEntityDeath
-                if (_bosses.Contains(entity as BaseCombatEntity))
-                {
-                    _bosses.Remove(entity as BaseCombatEntity);
-                }
+                // IMPORTANT:
+                // On some Carbon/Oxide builds, OnEntityKill can fire before OnEntityDeath.
+                // OnEntityDeath is where we drop loot and perform the full cleanup.
+                // If we remove tracking here, loot drops will never happen.
+                //
+                // So: only remove from the live boss list here (to stop UI / marker updates),
+                // and schedule a delayed cleanup as a safety net.
+                var combat = entity as BaseCombatEntity;
+                if (combat != null && _bosses.Contains(combat))
+                    _bosses.Remove(combat);
 
-                _beastDefs.Remove(entityId);
-                _bossDamageMultipliers.Remove(entityId);
-                _bossComponents.Remove(entityId);
-                _bossMarkers.Remove(entityId);
-                _bossTierById.Remove(entityId);
-                _lastAttacker.Remove(entityId);
-                _lastAttackerAt.Remove(entityId);
-                _mythicBossIds.Remove(entityId);
+                timer.Once(2f, () =>
+                {
+                    if (entity == null || entity.IsDestroyed)
+                    {
+                        _beastDefs.Remove(entityId);
+                        _bossDamageMultipliers.Remove(entityId);
+                        _bossComponents.Remove(entityId);
+                        _bossMarkers.Remove(entityId);
+                        _bossTierById.Remove(entityId);
+                        _lastAttacker.Remove(entityId);
+                        _lastAttackerAt.Remove(entityId);
+                        _mythicBossIds.Remove(entityId);
+                    }
+                });
             }
         }
 
@@ -1996,7 +2015,18 @@ namespace Oxide.Plugins
                         }
                     }
 
-                    DrawTitlePlate(player, bossId, def, title, enrageText);
+                    // Also draw a small health bar in the title plate, using current boss health percent.
+                    float hpFrac = 1f;
+                    try
+                    {
+                        float cur = boss.health;
+                        float max = boss.MaxHealth();
+                        if (max <= 0f) max = 1f;
+                        hpFrac = Mathf.Clamp01(cur / max);
+                    }
+                    catch { }
+
+                    DrawTitlePlate(player, bossId, def, title, enrageText, hpFrac);
                 }
                 else
                 {
@@ -2779,6 +2809,7 @@ namespace Oxide.Plugins
             int slots = Mathf.Max(6, def.Loot.Count);
             container.ServerInitialize(null, slots);
             container.GiveUID();
+            container.SetFlag(ItemContainer.Flag.IsLoot, true);
 
             // Check if this boss was a mythic variant for loot multiplier
             bool isMythic = _mythicBossIds.Contains(bossId);
@@ -2800,12 +2831,15 @@ namespace Oxide.Plugins
                 item?.MoveToContainer(container);
             }
 
-            var dropEntity = GameManager.server.CreateEntity(
-                "assets/prefabs/misc/item drop/item_drop_backpack.prefab",
-                pos,
-                Quaternion.identity,
-                true
-            ) as DroppedItemContainer;
+            // Some server builds no longer ship/allow the backpack drop prefab;
+            // fall back to the generic item drop prefab if needed.
+            DroppedItemContainer dropEntity = null;
+            var primaryPrefab = "assets/prefabs/misc/item drop/item_drop_backpack.prefab";
+            var fallbackPrefab = "assets/prefabs/misc/item drop/item_drop.prefab";
+
+            dropEntity = GameManager.server.CreateEntity(primaryPrefab, pos, Quaternion.identity, true) as DroppedItemContainer;
+            if (dropEntity == null)
+                dropEntity = GameManager.server.CreateEntity(fallbackPrefab, pos, Quaternion.identity, true) as DroppedItemContainer;
 
             if (dropEntity == null)
             {
@@ -2815,6 +2849,8 @@ namespace Oxide.Plugins
 
             dropEntity.inventory = container;
             container.entityOwner = dropEntity;
+            try { dropEntity.lootPanelName = "generic"; } catch { }
+            container.MarkDirty();
             dropEntity.ResetRemovalTime();
             dropEntity.Spawn();
             
@@ -2949,9 +2985,12 @@ namespace Oxide.Plugins
             CuiHelper.DestroyUi(player, TitlePlateUi);
         }
 
-        private void DrawTitlePlate(BasePlayer player, uint bossId, BeastDef def, string titleText, string enrageTextOrNull = null)
+        private void DrawTitlePlate(BasePlayer player, uint bossId, BeastDef def, string titleText, string enrageTextOrNull = null, float healthFraction = 1f)
         {
             if (player == null || !player.IsConnected) return;
+
+            // Ensure we don't accumulate UI layers; update means rebuild.
+            DestroyTitlePlate(player);
 
             var container = new CuiElementContainer();
 
@@ -3006,6 +3045,66 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = (1f - float.Parse(t)).ToString("F4") + " 0", AnchorMax = "1 1" },
                     CursorEnabled = false
                 }, TitlePlateUi);
+            }
+
+            // Optional health bar inside the title plate (bottom strip)
+            if (_config.TitlePlate.ShowHealthBar)
+            {
+                float pct = Mathf.Clamp01(healthFraction);
+
+                // Wrapper/back (nesting avoids flaky dynamic rect updates in some CUI builds)
+                container.Add(new CuiPanel
+                {
+                    Image = { Color = _config.TitlePlate.HealthBarBackColor },
+                    RectTransform = { AnchorMin = _config.TitlePlate.HealthBarAnchorMin, AnchorMax = _config.TitlePlate.HealthBarAnchorMax },
+                    CursorEnabled = false
+                }, TitlePlateUi, "BeastBoss_TitleHealthWrapper");
+
+                container.Add(new CuiPanel
+                {
+                    Image = { Color = _config.TitlePlate.HealthBarFillColor },
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = $"{pct:F4} 1" },
+                    CursorEnabled = false
+                }, "BeastBoss_TitleHealthWrapper", "BeastBoss_TitleHealthFillInner");
+
+                // Border (thin, using tier/mythic border color so it reads like a framed HP bar)
+                var borderHex = GetBorderHex(def, bossId);
+                var bc = ParseColor(borderHex);
+                bc.a = 1f;
+                var borderColor = ToCuiColor(bc);
+
+                float bt = Mathf.Clamp(_config.TitlePlate.HealthBarBorderThickness, 0f, 0.2f);
+                if (bt > 0f)
+                {
+                    // top
+                    container.Add(new CuiPanel
+                    {
+                        Image = { Color = borderColor },
+                        RectTransform = { AnchorMin = "0 " + (1f - bt).ToString("F4"), AnchorMax = "1 1" },
+                        CursorEnabled = false
+                    }, "BeastBoss_TitleHealthWrapper");
+                    // bottom
+                    container.Add(new CuiPanel
+                    {
+                        Image = { Color = borderColor },
+                        RectTransform = { AnchorMin = "0 0", AnchorMax = "1 " + bt.ToString("F4") },
+                        CursorEnabled = false
+                    }, "BeastBoss_TitleHealthWrapper");
+                    // left
+                    container.Add(new CuiPanel
+                    {
+                        Image = { Color = borderColor },
+                        RectTransform = { AnchorMin = "0 0", AnchorMax = bt.ToString("F4") + " 1" },
+                        CursorEnabled = false
+                    }, "BeastBoss_TitleHealthWrapper");
+                    // right
+                    container.Add(new CuiPanel
+                    {
+                        Image = { Color = borderColor },
+                        RectTransform = { AnchorMin = (1f - bt).ToString("F4") + " 0", AnchorMax = "1 1" },
+                        CursorEnabled = false
+                    }, "BeastBoss_TitleHealthWrapper");
+                }
             }
 
             // Optional outline using two labels offset (simple + compatible)
@@ -3214,13 +3313,17 @@ namespace Oxide.Plugins
                 }
             }
 
-            // Clear flee-related NPC Facts via reflection
-            TrySetNpcFact(npc, "IsAfraid", false);
-            TrySetNpcFact(npc, "Afraid", false);
-            TrySetNpcFact(npc, "ShouldFlee", false);
-            TrySetNpcFact(npc, "Fleeing", false);
-            TrySetNpcFact(npc, "Fear", false);
-            TrySetNpcFact(npc, "Panic", false);
+            // Clear flee-related NPC Facts using BaseNpc.Facts enum + SetFact reflection.
+            // This is much more reliable across builds than poking at a Facts property.
+            TryClearNpcFact(npc, "IsAfraid");
+            TryClearNpcFact(npc, "Afraid");
+            TryClearNpcFact(npc, "Fear");
+            TryClearNpcFact(npc, "Panic");
+            TryClearNpcFact(npc, "ShouldFlee");
+            TryClearNpcFact(npc, "Fleeing");
+            TryClearNpcFact(npc, "IsFleeing");
+            TryClearNpcFact(npc, "IsChasing");
+            TryClearNpcFact(npc, "IsAggro");
 
             npc.SendNetworkUpdate();
         }
@@ -3519,7 +3622,7 @@ namespace Oxide.Plugins
             {
                 CursorEnabled = false,
                 Image = { Color = _config.Ui.SecondaryColor },
-                RectTransform = { AnchorMin = _config.Ui.AnchorMin, AnchorMax = _config.Ui.AnchorMax, OffsetMin = "", OffsetMax = "" }
+                RectTransform = { AnchorMin = _config.Ui.AnchorMin, AnchorMax = _config.Ui.AnchorMax, OffsetMin = "0 0", OffsetMax = "0 0" }
             }, "Hud", "BeastBossHUD");
 
             // Health fill bar (scaled by percent)
@@ -3527,7 +3630,7 @@ namespace Oxide.Plugins
             {
                 CursorEnabled = false,
                 Image = { Color = _config.Ui.PrimaryColor },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = $"{percent} 1", OffsetMin = "", OffsetMax = "" }
+                RectTransform = { AnchorMin = "0 0", AnchorMax = $"{percent} 1", OffsetMin = "0 0", OffsetMax = "0 0" }
             }, "BeastBossHUD", "BeastBossHUD_Cover");
 
             // Text label
@@ -3544,7 +3647,7 @@ namespace Oxide.Plugins
                 Align = TextAnchor.MiddleCenter,
                 Color = _config.Ui.TextColor
             });
-            labelElement.Components.Add(new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" });
+            labelElement.Components.Add(new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "0 0", OffsetMax = "0 0" });
             container.Add(labelElement);
 
             // Add tier frame image (or fallback border) LAST so it renders on top
@@ -3558,7 +3661,7 @@ namespace Oxide.Plugins
                     Parent = "BeastBossHUD"
                 };
                 frameElement.Components.Add(new CuiRawImageComponent { Png = framePng });
-                frameElement.Components.Add(new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" });
+                frameElement.Components.Add(new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "0 0", OffsetMax = "0 0" });
                 container.Add(frameElement);
             }
             else
@@ -3571,7 +3674,7 @@ namespace Oxide.Plugins
                 {
                     CursorEnabled = false,
                     Image = { Color = _config.Ui.PrimaryColor },
-                    RectTransform = { AnchorMin = "0 " + (1f - borderThickness).ToString("F4"), AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" }
+                    RectTransform = { AnchorMin = "0 " + (1f - borderThickness).ToString("F4"), AnchorMax = "1 1", OffsetMin = "0 0", OffsetMax = "0 0" }
                 }, "BeastBossHUD", "BeastBossHUD_Border_Top");
 
                 // Bottom border
@@ -3579,7 +3682,7 @@ namespace Oxide.Plugins
                 {
                     CursorEnabled = false,
                     Image = { Color = _config.Ui.PrimaryColor },
-                    RectTransform = { AnchorMin = "0 0", AnchorMax = "1 " + borderThickness.ToString("F4"), OffsetMin = "", OffsetMax = "" }
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = "1 " + borderThickness.ToString("F4"), OffsetMin = "0 0", OffsetMax = "0 0" }
                 }, "BeastBossHUD", "BeastBossHUD_Border_Bottom");
 
                 // Left border
@@ -3587,7 +3690,7 @@ namespace Oxide.Plugins
                 {
                     CursorEnabled = false,
                     Image = { Color = _config.Ui.PrimaryColor },
-                    RectTransform = { AnchorMin = "0 0", AnchorMax = borderThickness.ToString("F4") + " 1", OffsetMin = "", OffsetMax = "" }
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = borderThickness.ToString("F4") + " 1", OffsetMin = "0 0", OffsetMax = "0 0" }
                 }, "BeastBossHUD", "BeastBossHUD_Border_Left");
 
                 // Right border
@@ -3595,7 +3698,7 @@ namespace Oxide.Plugins
                 {
                     CursorEnabled = false,
                     Image = { Color = _config.Ui.PrimaryColor },
-                    RectTransform = { AnchorMin = (1f - borderThickness).ToString("F4") + " 0", AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" }
+                    RectTransform = { AnchorMin = (1f - borderThickness).ToString("F4") + " 0", AnchorMax = "1 1", OffsetMin = "0 0", OffsetMax = "0 0" }
                 }, "BeastBossHUD", "BeastBossHUD_Border_Right");
             }
 
