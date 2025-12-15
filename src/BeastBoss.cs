@@ -1023,7 +1023,7 @@ namespace Oxide.Plugins
 
         #region Constants
 
-        private const string TIER_FRAME_BASE_URL = "https://raw.githubusercontent.com/<owner>/<repo>/<branch>/assets/ui_images/";
+        private const string TIER_FRAME_BASE_URL = "https://raw.githubusercontent.com/jmg5215/BeastBosses/main/assets/ui_images/";
         private const float HUD_MAX_DISTANCE = 80f; // Max distance for HUD visibility before removal
 
         #endregion
@@ -1215,18 +1215,14 @@ namespace Oxide.Plugins
 
                 info.damageTypes.ScaleAll(_config.GlobalIncomingDamageMultiplier);
 
-                // Apply damage reduction if boss is returning to spawn or outside leash radius
+                // Apply damage reduction if boss is outside leash radius
                 if (_config.Leash.Enabled)
                 {
                     BeastComponent comp;
                     if (_bossComponents.TryGetValue(bossId, out comp))
                     {
-                        // Even stronger reduction while returning (to prevent players from intercepting)
-                        if (comp.IsReturning)
-                        {
-                            info.damageTypes.ScaleAll(0.05f);
-                        }
-                        else if (_config.Leash.OutsideIncomingDamageMultiplier < 1f && IsBossOutsideLeash(entity, comp.SpawnPos))
+                        // Damage reduction only applies when outside leash, not when returning
+                        if (!comp.IsReturning && _config.Leash.OutsideIncomingDamageMultiplier < 1f && IsBossOutsideLeash(entity, comp.SpawnPos))
                         {
                             info.damageTypes.ScaleAll(_config.Leash.OutsideIncomingDamageMultiplier);
                         }
@@ -2421,6 +2417,9 @@ namespace Oxide.Plugins
 
             if (boss == null || boss.IsDestroyed) return;
 
+            // Clear HUD immediately when boss starts returning to spawn
+            ClearHudForBoss(boss);
+
             var npc = boss as BaseNpc;
 
             // Mark returning
@@ -2453,15 +2452,6 @@ namespace Oxide.Plugins
         private void CompleteReturnReset(BaseEntity boss, BeastDef def)
         {
             if (boss == null || boss.IsDestroyed) return;
-
-            var combat = boss as BaseCombatEntity;
-            if (combat != null)
-            {
-                float max = Mathf.Max(1f, def.BaseHealth);
-                float healTo = max * Mathf.Clamp01(_config.Leash.ResetHealFraction);
-                combat.health = healTo;
-                combat.SendNetworkUpdateImmediate();
-            }
 
             // Attempt to calm the AI to a neutral state
             var npc = boss as BaseNpc;
@@ -2664,16 +2654,6 @@ namespace Oxide.Plugins
             // Teleport back to spawn (no despawn).
             boss.transform.position = spawnPos;
             boss.SendNetworkUpdateImmediate();
-
-            // Restore health.
-            var combat = boss as BaseCombatEntity;
-            if (combat != null)
-            {
-                float max = Mathf.Max(1f, def.BaseHealth);
-                float healTo = max * Mathf.Clamp01(_config.Leash.ResetHealFraction);
-                combat.health = healTo;
-                combat.SendNetworkUpdateImmediate();
-            }
 
             // Attempt to calm/stop the AI (best-effort).
             var npc = boss as BaseNpc;
@@ -3411,26 +3391,34 @@ namespace Oxide.Plugins
                         }
                     }
 
+                    // Check if HUD has expired (no activity for ActiveDuration seconds)
+                    uint bossId = NetId(target);
+                    if (_lastAttackerAt.TryGetValue(bossId, out float lastHitTime))
+                    {
+                        float timeSinceLastHit = Time.realtimeSinceStartup - lastHitTime;
+                        if (timeSinceLastHit > Math.Max(1, _config.Ui.ActiveDuration))
+                        {
+                            RemoveHud(p);
+                            return;
+                        }
+                    }
+
                     ShowBossHud(p, target);
                 });
             }
 
-            // Reset expire timer
-            if (_hudExpireTimers.ContainsKey(userId))
+            // Only create expiration timer once on first engagement (don't reset it on every update)
+            if (!_hudExpireTimers.ContainsKey(userId))
             {
-                _hudExpireTimers[userId]?.Destroy();
-                _hudExpireTimers.Remove(userId);
+                _hudExpireTimers[userId] = timer.Once(Math.Max(1, _config.Ui.ActiveDuration * 2), () =>
+                {
+                    var p = BasePlayer.FindByID(userId);
+                    if (p != null && p.IsConnected)
+                        RemoveHud(p);
+                    else
+                        RemoveHud(userId);
+                });
             }
-
-            var duration = Math.Max(1, _config.Ui.ActiveDuration);
-            _hudExpireTimers[userId] = timer.Once(duration, () =>
-            {
-                var p = BasePlayer.FindByID(userId);
-                if (p != null && p.IsConnected)
-                    RemoveHud(p);
-                else
-                    RemoveHud(userId);
-            });
         }
 
         private void ShowBossHud(BasePlayer player, BaseCombatEntity boss)
@@ -3698,6 +3686,16 @@ namespace Oxide.Plugins
                     else if (_entity is BaseNpc npc)
                     {
                         _plugin.ClearFleeState(npc);
+                    }
+
+                    // At low health, re-apply full DisableFleeForBoss safeguards
+                    if (_combat != null)
+                    {
+                        float healthPercent = _combat.health / Mathf.Max(1f, _combat.MaxHealth());
+                        if (healthPercent <= 0.35f) // At 35% health or below
+                        {
+                            _plugin.DisableFleeForBoss(_entity);
+                        }
                     }
                 }
 
