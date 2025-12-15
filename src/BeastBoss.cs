@@ -2254,11 +2254,29 @@ namespace Oxide.Plugins
                     byte[] imageBytes = System.IO.File.ReadAllBytes(filePath);
 
                     // Store in FileStorage (server)
-                    var storageResult = FileStorage.server.Store(imageBytes, FileStorage.Type.png, default(NetworkableId));
-                    uint fileId = storageResult.id;
-                    _tierFrameCache[key] = fileId;
-
-                    Dbg($"Cached tier frame image: {key} -> FileStorage ID {fileId}");
+                    // Store() may return uint directly or a struct with .id depending on build
+                    try
+                    {
+                        // Try direct uint assignment first (newer/common builds)
+                        uint fileId = FileStorage.server.Store(imageBytes, FileStorage.Type.png, default(NetworkableId));
+                        _tierFrameCache[key] = fileId;
+                        Dbg($"Cached tier frame image: {key} -> FileStorage ID {fileId}");
+                    }
+                    catch
+                    {
+                        // Fallback: Store() might return a struct with .id property (older builds)
+                        try
+                        {
+                            dynamic storageResult = FileStorage.server.Store(imageBytes, FileStorage.Type.png, default(NetworkableId));
+                            uint fileId = (uint)storageResult.id;
+                            _tierFrameCache[key] = fileId;
+                            Dbg($"Cached tier frame image: {key} -> FileStorage ID {fileId}");
+                        }
+                        catch (System.Exception fallbackEx)
+                        {
+                            Dbg($"Failed to cache tier frame {key} (fallback): {fallbackEx.Message}");
+                        }
+                    }
                 }
                 catch (System.Exception ex)
                 {
