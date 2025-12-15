@@ -995,6 +995,11 @@ namespace Oxide.Plugins
 
         private const string TitlePlateUi = "BeastBoss_TitlePlateUI";
 
+        // Tier frame image cache (T1, T1M, T2, T2M, ..., T5, T5M)
+        // Values are either ImageLibrary keys (string) or FileStorage IDs (uint)
+        private readonly Dictionary<string, object> _tierFrameCache = new Dictionary<string, object>();
+        private bool _tierFramesLoaded = false;
+
         private void LoadData()
         {
             try
@@ -1029,6 +1034,7 @@ namespace Oxide.Plugins
         {
             permission.RegisterPermission(_config.PermissionAdmin, this);
             LoadData();
+            LoadTierFrameImages();
             StartAutoSpawnTimer();
 
             // Start marker update timer
@@ -2145,6 +2151,145 @@ namespace Oxide.Plugins
             return $"{c.r} {c.g} {c.b} {c.a}";
         }
 
+        // ==================== TIER FRAME IMAGE CACHE ====================
+
+        private void LoadTierFrameImages()
+        {
+            if (_tierFramesLoaded) return;
+
+            var tierFrameKeys = new[] { "T1", "T1M", "T2", "T2M", "T3", "T3M", "T4", "T4M", "T5", "T5M" };
+
+            // Determine asset directory
+            string assetDir = ResolveAssetDirectory();
+            if (string.IsNullOrEmpty(assetDir))
+            {
+                Dbg("Could not resolve tier frame asset directory. Tier frame images unavailable.");
+                _tierFramesLoaded = true;
+                return;
+            }
+
+            // Check if ImageLibrary is available
+            bool hasImageLibrary = plugins.Exists("ImageLibrary");
+
+            if (hasImageLibrary)
+            {
+                LoadTierFramesWithImageLibrary(assetDir, tierFrameKeys);
+            }
+            else
+            {
+                LoadTierFramesFromDisk(assetDir, tierFrameKeys);
+            }
+
+            _tierFramesLoaded = true;
+        }
+
+        private string ResolveAssetDirectory()
+        {
+            // Try common locations
+            var possiblePaths = new[]
+            {
+                System.IO.Path.Combine(ConVar.Server.rootFolder, "BeastBosses", "assets", "ui_images"),
+                System.IO.Path.Combine(ConVar.Server.rootFolder, "assets", "ui_images"),
+                System.IO.Path.Combine(ConVar.Server.rootFolder, "..", "assets", "ui_images"),
+                System.IO.Path.Combine(Interface.Oxide.PluginDirectory, "..", "BeastBosses", "assets", "ui_images"),
+                System.IO.Path.Combine(Interface.Oxide.PluginDirectory, "..", "assets", "ui_images")
+            };
+
+            foreach (var path in possiblePaths)
+            {
+                if (System.IO.Directory.Exists(path))
+                    return path;
+            }
+
+            return null;
+        }
+
+        private void LoadTierFramesWithImageLibrary(string assetDir, string[] tierFrameKeys)
+        {
+            var imageLib = plugins.Find("ImageLibrary");
+            if (imageLib == null) return;
+
+            foreach (var key in tierFrameKeys)
+            {
+                string filePath = System.IO.Path.Combine(assetDir, $"{key}.png");
+
+                if (!System.IO.File.Exists(filePath))
+                {
+                    Dbg($"Tier frame image not found: {filePath}");
+                    continue;
+                }
+
+                try
+                {
+                    byte[] imageBytes = System.IO.File.ReadAllBytes(filePath);
+                    string imageLibKey = $"BeastBoss.{key}";
+
+                    // Register with ImageLibrary (if not already registered)
+                    imageLib.Call("AddImage", filePath, imageLibKey);
+                    _tierFrameCache[key] = imageLibKey;
+
+                    Dbg($"Registered tier frame image: {key} -> {imageLibKey}");
+                }
+                catch (System.Exception ex)
+                {
+                    Dbg($"Failed to load tier frame {key}: {ex.Message}");
+                }
+            }
+        }
+
+        private void LoadTierFramesFromDisk(string assetDir, string[] tierFrameKeys)
+        {
+            foreach (var key in tierFrameKeys)
+            {
+                string filePath = System.IO.Path.Combine(assetDir, $"{key}.png");
+
+                if (!System.IO.File.Exists(filePath))
+                {
+                    Dbg($"Tier frame image not found: {filePath}");
+                    continue;
+                }
+
+                try
+                {
+                    byte[] imageBytes = System.IO.File.ReadAllBytes(filePath);
+
+                    // Store in FileStorage (server)
+                    uint fileId = FileStorage.server.Store(imageBytes, FileStorage.Type.png, NetworkableId.Invalid).id;
+                    _tierFrameCache[key] = fileId;
+
+                    Dbg($"Cached tier frame image: {key} -> FileStorage ID {fileId}");
+                }
+                catch (System.Exception ex)
+                {
+                    Dbg($"Failed to cache tier frame {key}: {ex.Message}");
+                }
+            }
+        }
+
+        private string GetTierFrameKey(int tier, bool mythic)
+        {
+            tier = Mathf.Clamp(tier, 1, 5);
+            return mythic ? $"T{tier}M" : $"T{tier}";
+        }
+
+        private int ExtractTierFromDef(BeastDef def)
+        {
+            if (def == null || string.IsNullOrEmpty(def.TierId) || def.TierId.Length == 0)
+                return 1;
+
+            if (int.TryParse(def.TierId.Substring(1), out var tier))
+                return Mathf.Clamp(tier, 1, 5);
+
+            return 1;
+        }
+
+        private object GetTierFrameImage(string frameKey)
+        {
+            if (_tierFrameCache.TryGetValue(frameKey, out var image))
+                return image;
+            return null;
+        }
+
         // ==================== PER-PLAYER TIER PROGRESSION ====================
 
         private PlayerTierProgress GetOrCreateProgress(ulong userId)
@@ -3241,13 +3386,27 @@ namespace Oxide.Plugins
             float percent = Mathf.Clamp01(current / max);
 
             string name = boss.ShortPrefabName;
-            if (_beastDefs.TryGetValue(NetId(boss), out var def))
+            int tier = 1;
+            bool mythic = false;
+            BeastDef def = null;
+
+            uint bossId = NetId(boss);
+
+            // Get boss definition (has tier and other metadata)
+            if (_beastDefs.TryGetValue(bossId, out def))
+            {
                 name = def.DisplayName;
+                tier = ExtractTierFromDef(def);
+            }
+
+            // Get mythic status
+            mythic = _mythicBossIds.Contains(bossId);
 
             string text = string.Format(_config.Ui.TextFormat, name, Mathf.CeilToInt(current), Mathf.CeilToInt(max));
 
             var container = new CuiElementContainer();
 
+            // Background panel
             container.Add(new CuiPanel
             {
                 CursorEnabled = false,
@@ -3255,6 +3414,43 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = _config.Ui.AnchorMin, AnchorMax = _config.Ui.AnchorMax, OffsetMin = "", OffsetMax = "" }
             }, "Hud", "BeastBossHUD");
 
+            // Try to add tier frame image
+            string frameKey = GetTierFrameKey(tier, mythic);
+            object frameImage = GetTierFrameImage(frameKey);
+            if (frameImage != null)
+            {
+                // Add frame image element (layered at bottom)
+                var frameElement = new CuiElement
+                {
+                    Name = "BeastBossHUD_Frame",
+                    Parent = "BeastBossHUD",
+                    Components = new List<ICuiComponent>
+                    {
+                        new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" }
+                    }
+                };
+
+                // Determine if image is string (ImageLibrary) or uint (FileStorage)
+                if (frameImage is string imageLibKey)
+                {
+                    frameElement.Components.Add(new CuiRawImageComponent
+                    {
+                        Url = imageLibKey,
+                        Sprite = "assets/content/ui/ui.background.tile.psd"
+                    });
+                }
+                else if (frameImage is uint fileId)
+                {
+                    frameElement.Components.Add(new CuiRawImageComponent
+                    {
+                        Png = fileId.ToString()
+                    });
+                }
+
+                container.Add(frameElement);
+            }
+
+            // Health fill bar (scaled by percent)
             container.Add(new CuiPanel
             {
                 CursorEnabled = false,
@@ -3262,6 +3458,7 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = "0 0", AnchorMax = $"{percent} 1", OffsetMin = "", OffsetMax = "" }
             }, "BeastBossHUD", "BeastBossHUD_Cover");
 
+            // Text label
             container.Add(new CuiElement
             {
                 Name = "BeastBossHUD_Label",
@@ -3746,6 +3943,13 @@ namespace Oxide.Plugins
 
                     // Ensure summoned helpers never flee
                     _plugin.DisableFleeForBoss(child);
+
+                    // Register helper with same tier and mythic status as boss
+                    uint childId = _plugin.NetId(child);
+                    uint parentId = _plugin.NetId(_entity);
+                    _plugin._beastDefs[childId] = _def;
+                    if (_plugin._mythicBossIds.Contains(parentId))
+                        _plugin._mythicBossIds.Add(childId);
 
                     _plugin.Dbg($"Summoned helper prefab='{child.ShortPrefabName}' id={child.net.ID} pos={spawnPos} for boss='{_def.DisplayName}' bossId={_entity.net.ID}");
 
