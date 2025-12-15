@@ -771,17 +771,12 @@ namespace Oxide.Plugins
             public string TextColor = "1 0.2 0.2 1";
             public int FontSize = 14;
 
-            // position within TitlePlate panel
-            public string AnchorMin = "0 0.05";
-            public string AnchorMax = "1 0.45";
+            // Position BELOW the title plate panel (as a separate UI element)
+            public string AnchorMin = "0.0 0.0";
+            public string AnchorMax = "1.0 0.0";
+            public string OffsetMin = "0 -18";
+            public string OffsetMax = "0 -4";
             public string Format = "ENRAGED: {seconds}s";
-
-            // Pulsing effect on title plate when enraged
-            public bool PulseTitlePlate = true;
-            public float PulseMinAlpha = 0.45f;
-            public float PulseMaxAlpha = 0.75f;
-            public float PulseSpeed = 2.0f; // higher = faster pulse
-            public bool PulseBorder = true;
         }
 
         public class TierConfig
@@ -1029,6 +1024,7 @@ namespace Oxide.Plugins
         #region Constants
 
         private const string TIER_FRAME_BASE_URL = "https://raw.githubusercontent.com/<owner>/<repo>/<branch>/assets/ui_images/";
+        private const float HUD_MAX_DISTANCE = 80f; // Max distance for HUD visibility before removal
 
         #endregion
 
@@ -1258,6 +1254,7 @@ namespace Oxide.Plugins
             if (!_bosses.Contains(entity)) return;
 
             _bosses.Remove(entity);
+            ClearHudForBoss(entity);
 
             BeastDef def;
             uint bossId = NetId(entity);
@@ -2349,6 +2346,71 @@ namespace Oxide.Plugins
             return false;
         }
 
+        private bool TryGetNpcFact(BaseNpc npc, string factName)
+        {
+            if (npc == null || string.IsNullOrEmpty(factName))
+                return false;
+
+            try
+            {
+                // Try to get Facts property/field
+                var factsProp = npc.GetType().GetProperty("Facts", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (factsProp != null)
+                {
+                    var factsObj = factsProp.GetValue(npc, null);
+                    if (factsObj != null)
+                    {
+                        // Try to get the fact value (could be a dictionary, collection, or object with properties)
+                        var factProp = factsObj.GetType().GetProperty(factName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
+                        if (factProp != null)
+                        {
+                            var val = factProp.GetValue(factsObj, null);
+                            if (val is bool boolVal) return boolVal;
+                            if (val is int intVal) return intVal != 0;
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            return false;
+        }
+
+        private void TrySetNpcFact(BaseNpc npc, string factName, bool value)
+        {
+            if (npc == null || string.IsNullOrEmpty(factName))
+                return;
+
+            try
+            {
+                // Try to get Facts property/field
+                var factsProp = npc.GetType().GetProperty("Facts", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (factsProp != null)
+                {
+                    var factsObj = factsProp.GetValue(npc, null);
+                    if (factsObj != null)
+                    {
+                        // Try to set the fact value via property
+                        var factProp = factsObj.GetType().GetProperty(factName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
+                        if (factProp != null && factProp.CanWrite)
+                        {
+                            factProp.SetValue(factsObj, value, null);
+                            return;
+                        }
+
+                        // Try to set via method (e.g., Facts.Set(string, bool))
+                        var setMethod = factsObj.GetType().GetMethod("Set", BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase, null, new[] { typeof(string), typeof(bool) }, null);
+                        if (setMethod != null)
+                        {
+                            setMethod.Invoke(factsObj, new object[] { factName, value });
+                            return;
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
         private void BeginReturnToSpawn(BeastComponent comp)
         {
             if (comp == null) return;
@@ -2943,14 +3005,29 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
             }, TitlePlateUi);
 
-            // Optional enrage countdown indicator
+            // Optional enrage countdown indicator (positioned below title plate)
             if (!string.IsNullOrEmpty(enrageTextOrNull) && _config.EnrageIndicator.Enabled)
             {
-                container.Add(new CuiLabel
+                var enrageElement = new CuiElement
                 {
-                    Text = { Text = enrageTextOrNull, FontSize = _config.EnrageIndicator.FontSize, Align = TextAnchor.MiddleCenter, Color = _config.EnrageIndicator.TextColor },
-                    RectTransform = { AnchorMin = _config.EnrageIndicator.AnchorMin, AnchorMax = _config.EnrageIndicator.AnchorMax }
-                }, TitlePlateUi);
+                    Name = "BeastBoss_EnrageCountdown",
+                    Parent = TitlePlateUi
+                };
+                enrageElement.Components.Add(new CuiTextComponent
+                {
+                    Text = enrageTextOrNull,
+                    FontSize = _config.EnrageIndicator.FontSize,
+                    Align = TextAnchor.MiddleCenter,
+                    Color = _config.EnrageIndicator.TextColor
+                });
+                enrageElement.Components.Add(new CuiRectTransformComponent
+                {
+                    AnchorMin = _config.EnrageIndicator.AnchorMin,
+                    AnchorMax = _config.EnrageIndicator.AnchorMax,
+                    OffsetMin = _config.EnrageIndicator.OffsetMin,
+                    OffsetMax = _config.EnrageIndicator.OffsetMax
+                });
+                container.Add(enrageElement);
             }
 
             CuiHelper.AddUi(player, container);
@@ -3056,24 +3133,29 @@ namespace Oxide.Plugins
                 {
                     try
                     {
-                        // Flee-related bool/float fields
+                        // Flee-related fields (bool, float, int)
                         if (field.Name.IndexOf("flee", StringComparison.OrdinalIgnoreCase) >= 0)
                         {
                             if (field.FieldType == typeof(bool))
                                 field.SetValue(npc, false);
                             else if (field.FieldType == typeof(float))
                                 field.SetValue(npc, 0f);
+                            else if (field.FieldType == typeof(int))
+                                field.SetValue(npc, 0);
                         }
 
-                        // Afraid/fear/panic related fields
+                        // Afraid/fear/panic/should related fields
                         if (field.Name.IndexOf("afraid", StringComparison.OrdinalIgnoreCase) >= 0 ||
                             field.Name.IndexOf("fear", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            field.Name.IndexOf("panic", StringComparison.OrdinalIgnoreCase) >= 0)
+                            field.Name.IndexOf("panic", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            field.Name.IndexOf("shouldflee", StringComparison.OrdinalIgnoreCase) >= 0)
                         {
                             if (field.FieldType == typeof(bool))
                                 field.SetValue(npc, false);
                             else if (field.FieldType == typeof(float))
                                 field.SetValue(npc, 0f);
+                            else if (field.FieldType == typeof(int))
+                                field.SetValue(npc, 0);
                         }
                     }
                     catch { }
@@ -3088,22 +3170,29 @@ namespace Oxide.Plugins
                         if ((prop.Name.IndexOf("flee", StringComparison.OrdinalIgnoreCase) >= 0 ||
                              prop.Name.IndexOf("afraid", StringComparison.OrdinalIgnoreCase) >= 0 ||
                              prop.Name.IndexOf("fear", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                             prop.Name.IndexOf("panic", StringComparison.OrdinalIgnoreCase) >= 0) &&
+                             prop.Name.IndexOf("panic", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                             prop.Name.IndexOf("shouldflee", StringComparison.OrdinalIgnoreCase) >= 0) &&
                             prop.CanWrite)
                         {
                             if (prop.PropertyType == typeof(bool))
                                 prop.SetValue(npc, false, null);
                             else if (prop.PropertyType == typeof(float))
                                 prop.SetValue(npc, 0f, null);
+                            else if (prop.PropertyType == typeof(int))
+                                prop.SetValue(npc, 0, null);
                         }
                     }
                     catch { }
                 }
             }
 
-            // Clear afraid NPC Facts
-            TryClearNpcFact(npc, "IsAfraid");
-            TryClearNpcFact(npc, "Afraid");
+            // Clear flee-related NPC Facts via reflection
+            TrySetNpcFact(npc, "IsAfraid", false);
+            TrySetNpcFact(npc, "Afraid", false);
+            TrySetNpcFact(npc, "ShouldFlee", false);
+            TrySetNpcFact(npc, "Fleeing", false);
+            TrySetNpcFact(npc, "Fear", false);
+            TrySetNpcFact(npc, "Panic", false);
 
             npc.SendNetworkUpdate();
         }
@@ -3288,6 +3377,40 @@ namespace Oxide.Plugins
                         return;
                     }
 
+                    // Check if boss is dead
+                    if (target.health <= 0f || (target is BaseCombatEntity bce && bce.IsDead()))
+                    {
+                        RemoveHud(p);
+                        return;
+                    }
+
+                    // Check for disengagement/fleeing
+                    var npc = target as BaseNpc;
+                    if (npc != null)
+                    {
+                        // Check if boss has fled or disengaged
+                        bool shouldRemove = false;
+
+                        // Check if afraid/fleeing (via Facts if available)
+                        if (TryGetNpcFact(npc, "Afraid") || TryGetNpcFact(npc, "Fleeing"))
+                            shouldRemove = true;
+
+                        // Check if returning to spawn (BeastComponent tracking)
+                        var bc = npc.GetComponent<BeastComponent>();
+                        if (bc != null && bc.IsReturning)
+                            shouldRemove = true;
+
+                        // Check if out of range
+                        if (Vector3.Distance(p.transform.position, npc.transform.position) > HUD_MAX_DISTANCE)
+                            shouldRemove = true;
+
+                        if (shouldRemove)
+                        {
+                            RemoveHud(p);
+                            return;
+                        }
+                    }
+
                     ShowBossHud(p, target);
                 });
             }
@@ -3349,23 +3472,29 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = _config.Ui.AnchorMin, AnchorMax = _config.Ui.AnchorMax, OffsetMin = "", OffsetMax = "" }
             }, "Hud", "BeastBossHUD");
 
-            // Try to add tier frame image
+            // Add tier frame image (or fallback border)
             string framePng = GetTierFramePng(tier, mythic);
             if (!string.IsNullOrEmpty(framePng))
             {
-                // Add frame image element (layered at bottom)
+                // ImageLibrary image available - use it
                 var frameElement = new CuiElement
                 {
                     Name = "BeastBossHUD_Frame",
                     Parent = "BeastBossHUD"
                 };
-                frameElement.Components.Add(new CuiRawImageComponent
-                {
-                    Png = framePng
-                });
+                frameElement.Components.Add(new CuiRawImageComponent { Png = framePng });
                 frameElement.Components.Add(new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" });
-
                 container.Add(frameElement);
+            }
+            else
+            {
+                // Fallback: simple dark red border panel
+                container.Add(new CuiPanel
+                {
+                    CursorEnabled = false,
+                    Image = { Color = _config.Ui.BorderColor },
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" }
+                }, "BeastBossHUD", "BeastBossHUD_Border");
             }
 
             // Health fill bar (scaled by percent)
@@ -3476,6 +3605,9 @@ namespace Oxide.Plugins
             private float _returnStartedAt;
             private float _nextReturnDestAt;
 
+            // Periodic flee enforcement
+            private float _nextFleeEnforcementCheck;
+
             public Vector3 SpawnPos => _spawnPos;
             public BaseEntity Entity => _entity;
             public BeastDef Def => _def;
@@ -3521,6 +3653,7 @@ namespace Oxide.Plugins
                 _nextFrost = now + UnityEngine.Random.Range(10f, 14f);
                 _nextFireTrail = now + UnityEngine.Random.Range(10f, 16f);
                 _nextWeatherProcCheck = now + UnityEngine.Random.Range(1f, 2f);
+                _nextFleeEnforcementCheck = now + 0.5f; // Start enforcement checks quickly
 
                 InvokeRepeating(nameof(Tick), 0.5f, 0.25f);
             }
@@ -3528,6 +3661,8 @@ namespace Oxide.Plugins
             private void OnDestroy()
             {
                 CancelInvoke(nameof(Tick));
+                if (_plugin != null && _entity != null)
+                    _plugin.ClearHudForBoss(_entity);
             }
 
             public void SetReturning(bool returning)
@@ -3546,6 +3681,24 @@ namespace Oxide.Plugins
                 {
                     CancelInvoke(nameof(Tick));
                     return;
+                }
+
+                var now = Time.realtimeSinceStartup;
+
+                // Periodic flee enforcement (especially at low health)
+                if (now >= _nextFleeEnforcementCheck)
+                {
+                    _nextFleeEnforcementCheck = now + 1.0f; // Check every 1 second
+
+                    // Clear flee state if health is low or always when NPC is available
+                    if (_animal != null)
+                    {
+                        _plugin.ClearFleeState(_animal);
+                    }
+                    else if (_entity is BaseNpc npc)
+                    {
+                        _plugin.ClearFleeState(npc);
+                    }
                 }
 
                 // Check if enrage duration has expired
