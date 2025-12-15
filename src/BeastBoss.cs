@@ -3492,7 +3492,7 @@ namespace Oxide.Plugins
                 container.Add(new CuiPanel
                 {
                     CursorEnabled = false,
-                    Image = { Color = _config.Ui.BorderColor },
+                    Image = { Color = _config.Ui.PrimaryColor },
                     RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" }
                 }, "BeastBossHUD", "BeastBossHUD_Border");
             }
