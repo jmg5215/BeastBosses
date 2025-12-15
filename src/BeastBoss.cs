@@ -2254,7 +2254,8 @@ namespace Oxide.Plugins
                     byte[] imageBytes = System.IO.File.ReadAllBytes(filePath);
 
                     // Store in FileStorage (server)
-                    uint fileId = FileStorage.server.Store(imageBytes, FileStorage.Type.png, default(NetworkableId)).id;
+                    var storageResult = FileStorage.server.Store(imageBytes, FileStorage.Type.png, default(NetworkableId));
+                    uint fileId = storageResult.id;
                     _tierFrameCache[key] = fileId;
 
                     Dbg($"Cached tier frame image: {key} -> FileStorage ID {fileId}");
