@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using Oxide.Core;
@@ -582,6 +583,8 @@ namespace Oxide.Plugins
             public string TextColor = "1 1 1 1";
             public string PrimaryColor = "0.7058824 0.07843138 0.07843138 1";
             public string SecondaryColor = "1 0.1960784 0.1960784 1";
+            public string BorderColor = "0 0 0 0.9";  // dark outline so it reads over red fill
+            public int BorderPx = 2;                     // pixel thickness
 
             // Slightly below your TargetHealthHUD default so they don't overlap perfectly
             public string AnchorMin = "0.3297916 0.88";
@@ -2661,6 +2664,79 @@ namespace Oxide.Plugins
             return best;
         }
 
+        private void ForceAggroNearestPlayer(BaseEntity npcEnt, BaseEntity ownerBoss, float durationSeconds = 4f, float interval = 0.5f)
+        {
+            var npc = npcEnt as BaseNpc;
+            if (npc == null) return;
+
+            int ticks = Mathf.Max(1, Mathf.RoundToInt(durationSeconds / Mathf.Max(0.1f, interval)));
+
+            timer.Repeat(interval, ticks, () =>
+            {
+                if (npcEnt == null || npcEnt.IsDestroyed) return;
+
+                // Never flee
+                ClearFleeState(npc);
+
+                // Pick target near the boss (or helper if boss missing)
+                var origin = ownerBoss != null ? ownerBoss : npcEnt;
+                var target = GetBestTargetPlayer(origin, 80f);
+                if (target == null) return;
+
+                // Best-effort: set destination toward target
+                TrySetNpcDestination(npc, target.transform.position);
+
+                // Best-effort: set target via reflection (different builds expose different APIs)
+                try
+                {
+                    var t = npc.GetType();
+                    var methods = t.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    foreach (var m in methods)
+                    {
+                        if (m.GetParameters().Length != 1) continue;
+                        var p0 = m.GetParameters()[0].ParameterType;
+
+                        if (!typeof(BaseEntity).IsAssignableFrom(p0)) continue;
+
+                        var name = m.Name.ToLowerInvariant();
+                        if (name.Contains("settarget") || name.Contains("attack") || name.Contains("targetentity"))
+                        {
+                            m.Invoke(npc, new object[] { target });
+                            break;
+                        }
+                    }
+                }
+                catch { /* ignore */ }
+            });
+        }
+
+        private void TrySetNpcDestination(BaseNpc npc, Vector3 destination)
+        {
+            if (npc == null || npc.IsDestroyed) return;
+
+            try
+            {
+                var t = npc.GetType();
+                var methods = t.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                foreach (var m in methods)
+                {
+                    var parms = m.GetParameters();
+                    if (parms.Length != 1) continue;
+
+                    var pType = parms[0].ParameterType;
+                    if (pType != typeof(Vector3)) continue;
+
+                    var name = m.Name.ToLowerInvariant();
+                    if (name.Contains("destination") || name.Contains("moveto") || name.Contains("setdest"))
+                    {
+                        m.Invoke(npc, new object[] { destination });
+                        return;
+                    }
+                }
+            }
+            catch { /* ignore */ }
+        }
+
         private BasePlayer GetPrimaryTarget(BaseEntity boss)
         {
             if (boss == null) return null;
@@ -2836,18 +2912,28 @@ namespace Oxide.Plugins
             }
 
             // Some server builds no longer ship/allow the backpack drop prefab;
-            // fall back to the generic item drop prefab if needed.
+            // Try multiple container-capable prefabs (build-dependent)
             DroppedItemContainer dropEntity = null;
-            var primaryPrefab = "assets/prefabs/misc/item drop/item_drop_backpack.prefab";
-            var fallbackPrefab = "assets/prefabs/misc/item drop/item_drop.prefab";
+            var prefabs = new[]
+            {
+                "assets/prefabs/misc/item drop/item_drop_backpack.prefab",
+                "assets/prefabs/misc/item drop/lootbag_small.prefab",
+                "assets/prefabs/misc/item drop/lootbag.prefab"
+            };
 
-            dropEntity = GameManager.server.CreateEntity(primaryPrefab, pos, Quaternion.identity, true) as DroppedItemContainer;
-            if (dropEntity == null)
-                dropEntity = GameManager.server.CreateEntity(fallbackPrefab, pos, Quaternion.identity, true) as DroppedItemContainer;
+            foreach (var prefab in prefabs)
+            {
+                var ent = GameManager.server.CreateEntity(prefab, pos, Quaternion.identity, true);
+                dropEntity = ent as DroppedItemContainer;
+                if (dropEntity != null) break;
+
+                ent?.Kill();
+            }
 
             if (dropEntity == null)
             {
                 container.Kill();
+                Dbg($"DropConfiguredLoot: FAILED to create DroppedItemContainer at {pos} (no compatible prefab found).");
                 return;
             }
 
@@ -2855,12 +2941,10 @@ namespace Oxide.Plugins
             container.entityOwner = dropEntity;
             try { dropEntity.lootPanelName = "generic"; } catch { }
             
-            // 'DropReason' isn't available on all server builds; don't set it.
-            // Just ensure the entity/network state is updated for proper client handling.
-            dropEntity.SendNetworkUpdateImmediate();
-            
-            dropEntity.ResetRemovalTime();
+            // Spawn FIRST, then reset removal time, then network update
             dropEntity.Spawn();
+            dropEntity.ResetRemovalTime();
+            dropEntity.SendNetworkUpdateImmediate();
             
             if (isMythic)
             {
@@ -3016,17 +3100,20 @@ namespace Oxide.Plugins
             if (_config.TitlePlate.BorderThickness > 0f)
             {
                 var borderHex = GetBorderHex(def, bossId);
-                var bc = ParseColor(borderHex);
-                bc.a = 1f;
+                var bcCol = ParseColor(borderHex);
+                bcCol.a = 1f;
 
-                var borderColor = ToCuiColor(bc);
-                var t = Mathf.Clamp(_config.TitlePlate.BorderThickness, 0.001f, 0.05f).ToString("F4");
+                var borderColor = ToCuiColor(bcCol);
+
+                float bt = Mathf.Clamp(_config.TitlePlate.BorderThickness, 0.001f, 0.05f);
+                string btStr = bt.ToString("F4", CultureInfo.InvariantCulture);
+                string invTop = (1f - bt).ToString("F4", CultureInfo.InvariantCulture);
 
                 // Top border
                 container.Add(new CuiPanel
                 {
                     Image = { Color = borderColor },
-                    RectTransform = { AnchorMin = "0 " + (1f - float.Parse(t)).ToString("F4"), AnchorMax = "1 1" },
+                    RectTransform = { AnchorMin = $"0 {invTop}", AnchorMax = "1 1" },
                     CursorEnabled = false
                 }, TitlePlateUi);
 
@@ -3034,7 +3121,7 @@ namespace Oxide.Plugins
                 container.Add(new CuiPanel
                 {
                     Image = { Color = borderColor },
-                    RectTransform = { AnchorMin = "0 0", AnchorMax = "1 " + t },
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = $"1 {btStr}" },
                     CursorEnabled = false
                 }, TitlePlateUi);
 
@@ -3042,7 +3129,7 @@ namespace Oxide.Plugins
                 container.Add(new CuiPanel
                 {
                     Image = { Color = borderColor },
-                    RectTransform = { AnchorMin = "0 0", AnchorMax = t + " 1" },
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = $"{btStr} 1" },
                     CursorEnabled = false
                 }, TitlePlateUi);
 
@@ -3050,7 +3137,7 @@ namespace Oxide.Plugins
                 container.Add(new CuiPanel
                 {
                     Image = { Color = borderColor },
-                    RectTransform = { AnchorMin = (1f - float.Parse(t)).ToString("F4") + " 0", AnchorMax = "1 1" },
+                    RectTransform = { AnchorMin = $"{invTop} 0", AnchorMax = "1 1" },
                     CursorEnabled = false
                 }, TitlePlateUi);
             }
@@ -3084,32 +3171,35 @@ namespace Oxide.Plugins
                 float bt = Mathf.Clamp(_config.TitlePlate.HealthBarBorderThickness, 0f, 0.2f);
                 if (bt > 0f)
                 {
+                    string btStr = bt.ToString("F4", CultureInfo.InvariantCulture);
+                    string invTop = (1f - bt).ToString("F4", CultureInfo.InvariantCulture);
+
                     // top
                     container.Add(new CuiPanel
                     {
                         Image = { Color = borderColor },
-                        RectTransform = { AnchorMin = "0 " + (1f - bt).ToString("F4"), AnchorMax = "1 1" },
+                        RectTransform = { AnchorMin = $"0 {invTop}", AnchorMax = "1 1" },
                         CursorEnabled = false
                     }, "BeastBoss_TitleHealthWrapper");
                     // bottom
                     container.Add(new CuiPanel
                     {
                         Image = { Color = borderColor },
-                        RectTransform = { AnchorMin = "0 0", AnchorMax = "1 " + bt.ToString("F4") },
+                        RectTransform = { AnchorMin = "0 0", AnchorMax = $"1 {btStr}" },
                         CursorEnabled = false
                     }, "BeastBoss_TitleHealthWrapper");
                     // left
                     container.Add(new CuiPanel
                     {
                         Image = { Color = borderColor },
-                        RectTransform = { AnchorMin = "0 0", AnchorMax = bt.ToString("F4") + " 1" },
+                        RectTransform = { AnchorMin = "0 0", AnchorMax = $"{btStr} 1" },
                         CursorEnabled = false
                     }, "BeastBoss_TitleHealthWrapper");
                     // right
                     container.Add(new CuiPanel
                     {
                         Image = { Color = borderColor },
-                        RectTransform = { AnchorMin = (1f - bt).ToString("F4") + " 0", AnchorMax = "1 1" },
+                        RectTransform = { AnchorMin = $"{invTop} 0", AnchorMax = "1 1" },
                         CursorEnabled = false
                     }, "BeastBoss_TitleHealthWrapper");
                 }
@@ -3674,39 +3764,40 @@ namespace Oxide.Plugins
             }
             else
             {
-                // Fallback: thin border panels (4 edges) to frame the health bar
-                float borderThickness = 0.02f; // 2% of panel height
+                // Fallback: pixel border panels (4 edges) so the outline is always visible
+                int px = Mathf.Clamp(_config.Ui.BorderPx, 1, 6);
+                string bc = _config.Ui.BorderColor;
 
-                // Top border
+                // Top
                 container.Add(new CuiPanel
                 {
                     CursorEnabled = false,
-                    Image = { Color = _config.Ui.PrimaryColor },
-                    RectTransform = { AnchorMin = "0 " + (1f - borderThickness).ToString("F4"), AnchorMax = "1 1", OffsetMin = "0 0", OffsetMax = "0 0" }
+                    Image = { Color = bc },
+                    RectTransform = { AnchorMin = "0 1", AnchorMax = "1 1", OffsetMin = $"0 {-px}", OffsetMax = "0 0" }
                 }, "BeastBossHUD", "BeastBossHUD_Border_Top");
 
-                // Bottom border
+                // Bottom
                 container.Add(new CuiPanel
                 {
                     CursorEnabled = false,
-                    Image = { Color = _config.Ui.PrimaryColor },
-                    RectTransform = { AnchorMin = "0 0", AnchorMax = "1 " + borderThickness.ToString("F4"), OffsetMin = "0 0", OffsetMax = "0 0" }
+                    Image = { Color = bc },
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0", OffsetMin = "0 0", OffsetMax = $"0 {px}" }
                 }, "BeastBossHUD", "BeastBossHUD_Border_Bottom");
 
-                // Left border
+                // Left
                 container.Add(new CuiPanel
                 {
                     CursorEnabled = false,
-                    Image = { Color = _config.Ui.PrimaryColor },
-                    RectTransform = { AnchorMin = "0 0", AnchorMax = borderThickness.ToString("F4") + " 1", OffsetMin = "0 0", OffsetMax = "0 0" }
+                    Image = { Color = bc },
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = "0 1", OffsetMin = "0 0", OffsetMax = $"{px} 0" }
                 }, "BeastBossHUD", "BeastBossHUD_Border_Left");
 
-                // Right border
+                // Right
                 container.Add(new CuiPanel
                 {
                     CursorEnabled = false,
-                    Image = { Color = _config.Ui.PrimaryColor },
-                    RectTransform = { AnchorMin = (1f - borderThickness).ToString("F4") + " 0", AnchorMax = "1 1", OffsetMin = "0 0", OffsetMax = "0 0" }
+                    Image = { Color = bc },
+                    RectTransform = { AnchorMin = "1 0", AnchorMax = "1 1", OffsetMin = $"{-px} 0", OffsetMax = "0 0" }
                 }, "BeastBossHUD", "BeastBossHUD_Border_Right");
             }
 
@@ -4212,6 +4303,9 @@ namespace Oxide.Plugins
                     // Attach FleeGuardComponent for periodic enforcement (helpers don't have BeastComponent)
                     var fleeGuard = child.gameObject.AddComponent<FleeGuardComponent>();
                     fleeGuard.Init(_plugin, child);
+
+                    // Force aggro toward nearest player (combats helper flee behavior)
+                    _plugin.ForceAggroNearestPlayer(child, _entity, 4f, 0.5f);
 
                     // Register helper with same tier and mythic status as boss
                     uint childId = _plugin.NetId(child);
