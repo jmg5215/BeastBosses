@@ -2810,7 +2810,11 @@ namespace Oxide.Plugins
             int slots = Mathf.Max(6, def.Loot.Count);
             container.ServerInitialize(null, slots);
             container.GiveUID();
-            container.SetFlag(ItemContainer.Flag.IsLoot, true);
+            
+            // Version-safe loot container flags (IsLoot not available on all builds)
+            container.SetFlag(ItemContainer.Flag.NoItemInput, true);   // Prevent players inserting items
+            container.SetFlag(ItemContainer.Flag.NoItemMove, false);   // Allow looting/moving items out
+            container.MarkDirty();
 
             // Check if this boss was a mythic variant for loot multiplier
             bool isMythic = _mythicBossIds.Contains(bossId);
@@ -2851,7 +2855,11 @@ namespace Oxide.Plugins
             dropEntity.inventory = container;
             container.entityOwner = dropEntity;
             try { dropEntity.lootPanelName = "generic"; } catch { }
-            container.MarkDirty();
+            
+            // Set drop reason and network update for proper client handling
+            dropEntity.DropReason = DroppedItemContainer.DropReasonEnum.PlayerLoot;
+            dropEntity.SendNetworkUpdate();
+            
             dropEntity.ResetRemovalTime();
             dropEntity.Spawn();
             
