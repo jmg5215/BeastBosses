@@ -2811,9 +2811,8 @@ namespace Oxide.Plugins
             container.ServerInitialize(null, slots);
             container.GiveUID();
             
-            // Version-safe loot container flags (IsLoot not available on all builds)
+            // Version-safe loot container flags (IsLoot and NoItemMove not available on all builds)
             container.SetFlag(ItemContainer.Flag.NoItemInput, true);   // Prevent players inserting items
-            container.SetFlag(ItemContainer.Flag.NoItemMove, false);   // Allow looting/moving items out
             container.MarkDirty();
 
             // Check if this boss was a mythic variant for loot multiplier
