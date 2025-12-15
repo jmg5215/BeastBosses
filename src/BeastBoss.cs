@@ -2710,32 +2710,6 @@ namespace Oxide.Plugins
             });
         }
 
-        private void TrySetNpcDestination(BaseNpc npc, Vector3 destination)
-        {
-            if (npc == null || npc.IsDestroyed) return;
-
-            try
-            {
-                var t = npc.GetType();
-                var methods = t.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                foreach (var m in methods)
-                {
-                    var parms = m.GetParameters();
-                    if (parms.Length != 1) continue;
-
-                    var pType = parms[0].ParameterType;
-                    if (pType != typeof(Vector3)) continue;
-
-                    var name = m.Name.ToLowerInvariant();
-                    if (name.Contains("destination") || name.Contains("moveto") || name.Contains("setdest"))
-                    {
-                        m.Invoke(npc, new object[] { destination });
-                        return;
-                    }
-                }
-            }
-            catch { /* ignore */ }
-        }
 
         private BasePlayer GetPrimaryTarget(BaseEntity boss)
         {
