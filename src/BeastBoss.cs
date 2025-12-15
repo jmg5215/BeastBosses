@@ -1379,6 +1379,38 @@ namespace Oxide.Plugins
             SaveData();
         }
 
+        private void OnEntityKill(BaseNetworkable ent)
+        {
+            if (ent == null) return;
+
+            var entity = ent as BaseEntity;
+            if (entity == null) return;
+
+            uint entityId = NetId(entity);
+
+            // Check if this is a tracked boss
+            if (_beastDefs.ContainsKey(entityId) || _bosses.Contains(entity as BaseCombatEntity))
+            {
+                // Clear HUD immediately
+                ClearHudForBoss(entity);
+
+                // Clean up tracking if not already done by OnEntityDeath
+                if (_bosses.Contains(entity as BaseCombatEntity))
+                {
+                    _bosses.Remove(entity as BaseCombatEntity);
+                }
+
+                _beastDefs.Remove(entityId);
+                _bossDamageMultipliers.Remove(entityId);
+                _bossComponents.Remove(entityId);
+                _bossMarkers.Remove(entityId);
+                _bossTierById.Remove(entityId);
+                _lastAttacker.Remove(entityId);
+                _lastAttackerAt.Remove(entityId);
+                _mythicBossIds.Remove(entityId);
+            }
+        }
+
         private void OnPlayerDisconnected(BasePlayer player, string reason)
         {
             if (player == null) return;
@@ -2695,6 +2727,10 @@ namespace Oxide.Plugins
             var driver = entity.gameObject.AddComponent<BeastComponent>();
             driver.Init(this, entity, def);
 
+            // Attach FleeGuardComponent as extra insurance for continuous flee suppression
+            var fleeGuard = entity.gameObject.AddComponent<FleeGuardComponent>();
+            fleeGuard.Init(this, entity);
+
             _bosses.Add(entity);
             uint bossId = NetId(entity);
             _beastDefs[bossId] = def;
@@ -3137,6 +3173,18 @@ namespace Oxide.Plugins
                             else if (field.FieldType == typeof(int))
                                 field.SetValue(npc, 0);
                         }
+
+                        // Health/threshold trigger fields (e.g., fleehealth, fleethreshold, fearhealth, panicthreshold)
+                        if (field.Name.IndexOf("fleehealth", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            field.Name.IndexOf("fleethreshold", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            field.Name.IndexOf("fearhealth", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            field.Name.IndexOf("panicthreshold", StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            if (field.FieldType == typeof(float))
+                                field.SetValue(npc, 0f);
+                            else if (field.FieldType == typeof(int))
+                                field.SetValue(npc, 0);
+                        }
                     }
                     catch { }
                 }
@@ -3357,6 +3405,15 @@ namespace Oxide.Plugins
                         return;
                     }
 
+                    uint bossId = NetId(target);
+
+                    // Check if boss is no longer tracked (dead or removed)
+                    if (!_bosses.Contains(target) || !_beastDefs.ContainsKey(bossId))
+                    {
+                        RemoveHud(p);
+                        return;
+                    }
+
                     // Check if boss is dead
                     if (target.health <= 0f || (target is BaseCombatEntity bce && bce.IsDead()))
                     {
@@ -3392,7 +3449,6 @@ namespace Oxide.Plugins
                     }
 
                     // Check if HUD has expired (no activity for ActiveDuration seconds)
-                    uint bossId = NetId(target);
                     if (_lastAttackerAt.TryGetValue(bossId, out float lastHitTime))
                     {
                         float timeSinceLastHit = Time.realtimeSinceStartup - lastHitTime;
@@ -3401,6 +3457,12 @@ namespace Oxide.Plugins
                             RemoveHud(p);
                             return;
                         }
+                    }
+                    else
+                    {
+                        // No attacker recorded - remove HUD if boss is idle
+                        RemoveHud(p);
+                        return;
                     }
 
                     ShowBossHud(p, target);
@@ -3460,31 +3522,6 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = _config.Ui.AnchorMin, AnchorMax = _config.Ui.AnchorMax, OffsetMin = "", OffsetMax = "" }
             }, "Hud", "BeastBossHUD");
 
-            // Add tier frame image (or fallback border)
-            string framePng = GetTierFramePng(tier, mythic);
-            if (!string.IsNullOrEmpty(framePng))
-            {
-                // ImageLibrary image available - use it
-                var frameElement = new CuiElement
-                {
-                    Name = "BeastBossHUD_Frame",
-                    Parent = "BeastBossHUD"
-                };
-                frameElement.Components.Add(new CuiRawImageComponent { Png = framePng });
-                frameElement.Components.Add(new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" });
-                container.Add(frameElement);
-            }
-            else
-            {
-                // Fallback: simple dark red border panel
-                container.Add(new CuiPanel
-                {
-                    CursorEnabled = false,
-                    Image = { Color = _config.Ui.PrimaryColor },
-                    RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" }
-                }, "BeastBossHUD", "BeastBossHUD_Border");
-            }
-
             // Health fill bar (scaled by percent)
             container.Add(new CuiPanel
             {
@@ -3509,6 +3546,58 @@ namespace Oxide.Plugins
             });
             labelElement.Components.Add(new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" });
             container.Add(labelElement);
+
+            // Add tier frame image (or fallback border) LAST so it renders on top
+            string framePng = GetTierFramePng(tier, mythic);
+            if (!string.IsNullOrEmpty(framePng))
+            {
+                // ImageLibrary image available - use it
+                var frameElement = new CuiElement
+                {
+                    Name = "BeastBossHUD_Frame",
+                    Parent = "BeastBossHUD"
+                };
+                frameElement.Components.Add(new CuiRawImageComponent { Png = framePng });
+                frameElement.Components.Add(new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" });
+                container.Add(frameElement);
+            }
+            else
+            {
+                // Fallback: thin border panels (4 edges) to frame the health bar
+                float borderThickness = 0.02f; // 2% of panel height
+
+                // Top border
+                container.Add(new CuiPanel
+                {
+                    CursorEnabled = false,
+                    Image = { Color = _config.Ui.PrimaryColor },
+                    RectTransform = { AnchorMin = "0 " + (1f - borderThickness).ToString("F4"), AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" }
+                }, "BeastBossHUD", "BeastBossHUD_Border_Top");
+
+                // Bottom border
+                container.Add(new CuiPanel
+                {
+                    CursorEnabled = false,
+                    Image = { Color = _config.Ui.PrimaryColor },
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = "1 " + borderThickness.ToString("F4"), OffsetMin = "", OffsetMax = "" }
+                }, "BeastBossHUD", "BeastBossHUD_Border_Bottom");
+
+                // Left border
+                container.Add(new CuiPanel
+                {
+                    CursorEnabled = false,
+                    Image = { Color = _config.Ui.PrimaryColor },
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = borderThickness.ToString("F4") + " 1", OffsetMin = "", OffsetMax = "" }
+                }, "BeastBossHUD", "BeastBossHUD_Border_Left");
+
+                // Right border
+                container.Add(new CuiPanel
+                {
+                    CursorEnabled = false,
+                    Image = { Color = _config.Ui.PrimaryColor },
+                    RectTransform = { AnchorMin = (1f - borderThickness).ToString("F4") + " 0", AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" }
+                }, "BeastBossHUD", "BeastBossHUD_Border_Right");
+            }
 
             CuiHelper.DestroyUi(player, "BeastBossHUD");
             CuiHelper.AddUi(player, container);
@@ -4009,6 +4098,10 @@ namespace Oxide.Plugins
                     // Ensure summoned helpers never flee
                     _plugin.DisableFleeForBoss(child);
 
+                    // Attach FleeGuardComponent for periodic enforcement (helpers don't have BeastComponent)
+                    var fleeGuard = child.gameObject.AddComponent<FleeGuardComponent>();
+                    fleeGuard.Init(_plugin, child);
+
                     // Register helper with same tier and mythic status as boss
                     uint childId = _plugin.NetId(child);
                     uint parentId = _plugin.NetId(_entity);
@@ -4171,6 +4264,47 @@ namespace Oxide.Plugins
             }
 
             #endregion
+        }
+
+        /// <summary>
+        /// MonoBehaviour component that periodically clears flee state for entities (helpers, bosses) without BeastComponent.
+        /// Attached to summoned minions and optionally to main bosses for extra insurance.
+        /// </summary>
+        private class FleeGuardComponent : MonoBehaviour
+        {
+            private BeastBoss _plugin;
+            private BaseEntity _entity;
+            private float _nextEnforcementCheck;
+
+            public void Init(BeastBoss plugin, BaseEntity entity)
+            {
+                _plugin = plugin;
+                _entity = entity;
+                _nextEnforcementCheck = Time.realtimeSinceStartup + 0.5f;
+
+                // Start repeating enforcement every 1.0 second
+                InvokeRepeating(nameof(EnforceNoFlee), 1.0f, 1.0f);
+            }
+
+            private void EnforceNoFlee()
+            {
+                if (_entity == null || _entity.IsDestroyed)
+                {
+                    CancelInvoke(nameof(EnforceNoFlee));
+                    return;
+                }
+
+                var npc = _entity as BaseNpc;
+                if (npc != null)
+                {
+                    _plugin.ClearFleeState(npc);
+                }
+            }
+
+            private void OnDestroy()
+            {
+                CancelInvoke(nameof(EnforceNoFlee));
+            }
         }
 
         #endregion
