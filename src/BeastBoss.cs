@@ -3764,7 +3764,6 @@ namespace Oxide.Plugins
 
                     if (_plugin.IsBossOutsideLeash(_entity, _spawnPos))
                     {
-                        var now = Time.realtimeSinceStartup;
                         if (_outsideLeashSince < 0f) _outsideLeashSince = now;
                         else if (_plugin._config.Leash.ResetAfterSecondsOutside > 0f &&
                                  (now - _outsideLeashSince) >= _plugin._config.Leash.ResetAfterSecondsOutside)
