@@ -3714,7 +3714,6 @@ namespace Oxide.Plugins
                     // If we are currently returning, manage the return-to-spawn journey
                     if (_isReturning)
                     {
-                        var now = Time.realtimeSinceStartup;
                         var npc = _entity as BaseNpc;
 
                         // Refresh destination periodically
