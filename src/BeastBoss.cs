@@ -3357,16 +3357,13 @@ namespace Oxide.Plugins
                 var frameElement = new CuiElement
                 {
                     Name = "BeastBossHUD_Frame",
-                    Parent = "BeastBossHUD",
-                    Components = new List<ICuiComponent>
-                    {
-                        new CuiRawImageComponent
-                        {
-                            Png = framePng
-                        },
-                        new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" }
-                    }
+                    Parent = "BeastBossHUD"
                 };
+                frameElement.Components.Add(new CuiRawImageComponent
+                {
+                    Png = framePng
+                });
+                frameElement.Components.Add(new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" });
 
                 container.Add(frameElement);
             }
@@ -3380,23 +3377,21 @@ namespace Oxide.Plugins
             }, "BeastBossHUD", "BeastBossHUD_Cover");
 
             // Text label
-            container.Add(new CuiElement
+            var labelElement = new CuiElement
             {
                 Name = "BeastBossHUD_Label",
-                Parent = "BeastBossHUD",
-                Components =
-                {
-                    new CuiTextComponent
-                    {
-                        Text = text,
-                        Font = "robotocondensed-bold.ttf",
-                        FontSize = 14,
-                        Align = TextAnchor.MiddleCenter,
-                        Color = _config.Ui.TextColor
-                    },
-                    new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" }
-                }
+                Parent = "BeastBossHUD"
+            };
+            labelElement.Components.Add(new CuiTextComponent
+            {
+                Text = text,
+                Font = "robotocondensed-bold.ttf",
+                FontSize = 14,
+                Align = TextAnchor.MiddleCenter,
+                Color = _config.Ui.TextColor
             });
+            labelElement.Components.Add(new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" });
+            container.Add(labelElement);
 
             CuiHelper.DestroyUi(player, "BeastBossHUD");
             CuiHelper.AddUi(player, container);
