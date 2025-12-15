@@ -13,6 +13,8 @@ namespace Oxide.Plugins
     [Description("BossMonster-style animal bosses with tiers, lockouts, spawnpoints, events and a boss health HUD")]
     public class BeastBoss : RustPlugin
     {
+        [PluginReference("ImageLibrary")]
+        private Plugin ImageLibrary;
         #region Config
 
         internal ConfigData _config;
@@ -995,11 +997,6 @@ namespace Oxide.Plugins
 
         private const string TitlePlateUi = "BeastBoss_TitlePlateUI";
 
-        // Tier frame image cache (T1, T1M, T2, T2M, ..., T5, T5M)
-        // Values are either ImageLibrary keys (string) or FileStorage IDs (uint)
-        private readonly Dictionary<string, object> _tierFrameCache = new Dictionary<string, object>();
-        private bool _tierFramesLoaded = false;
-
         private void LoadData()
         {
             try
@@ -1028,13 +1025,23 @@ namespace Oxide.Plugins
 
         #endregion
 
+        #region Constants
+
+        private const string TIER_FRAME_BASE_URL = "https://raw.githubusercontent.com/<owner>/<repo>/<branch>/assets/ui_images/";
+
+        #endregion
+
         #region Hooks
+
+        private void OnServerInitialized()
+        {
+            RegisterTierFrameImages();
+        }
 
         private void Init()
         {
             permission.RegisterPermission(_config.PermissionAdmin, this);
             LoadData();
-            LoadTierFrameImages();
             StartAutoSpawnTimer();
 
             // Start marker update timer
@@ -2151,137 +2158,52 @@ namespace Oxide.Plugins
             return $"{c.r} {c.g} {c.b} {c.a}";
         }
 
-        // ==================== TIER FRAME IMAGE CACHE ====================
+        // ==================== TIER FRAME IMAGE REGISTRATION ====================
 
-        private void LoadTierFrameImages()
+        private void RegisterTierFrameImages()
         {
-            if (_tierFramesLoaded) return;
-
-            var tierFrameKeys = new[] { "T1", "T1M", "T2", "T2M", "T3", "T3M", "T4", "T4M", "T5", "T5M" };
-
-            // Determine asset directory
-            string assetDir = ResolveAssetDirectory();
-            if (string.IsNullOrEmpty(assetDir))
+            if (ImageLibrary == null || !ImageLibrary.IsLoaded)
             {
-                Dbg("Could not resolve tier frame asset directory. Tier frame images unavailable.");
-                _tierFramesLoaded = true;
+                Dbg("ImageLibrary not available. Tier frame images will not load.");
                 return;
             }
 
-            // Check if ImageLibrary is available
-            bool hasImageLibrary = plugins.Exists("ImageLibrary");
-
-            if (hasImageLibrary)
-            {
-                LoadTierFramesWithImageLibrary(assetDir, tierFrameKeys);
-            }
-            else
-            {
-                LoadTierFramesFromDisk(assetDir, tierFrameKeys);
-            }
-
-            _tierFramesLoaded = true;
-        }
-
-        private string ResolveAssetDirectory()
-        {
-            // Try common locations
-            var possiblePaths = new[]
-            {
-                System.IO.Path.Combine(ConVar.Server.rootFolder, "BeastBosses", "assets", "ui_images"),
-                System.IO.Path.Combine(ConVar.Server.rootFolder, "assets", "ui_images"),
-                System.IO.Path.Combine(ConVar.Server.rootFolder, "..", "assets", "ui_images"),
-                System.IO.Path.Combine(Interface.Oxide.PluginDirectory, "..", "BeastBosses", "assets", "ui_images"),
-                System.IO.Path.Combine(Interface.Oxide.PluginDirectory, "..", "assets", "ui_images")
-            };
-
-            foreach (var path in possiblePaths)
-            {
-                if (System.IO.Directory.Exists(path))
-                    return path;
-            }
-
-            return null;
-        }
-
-        private void LoadTierFramesWithImageLibrary(string assetDir, string[] tierFrameKeys)
-        {
-            var imageLib = plugins.Find("ImageLibrary");
-            if (imageLib == null) return;
+            var tierFrameKeys = new[] { "T1", "T1M", "T2", "T2M", "T3", "T3M", "T4", "T4M", "T5", "T5M" };
 
             foreach (var key in tierFrameKeys)
             {
-                string filePath = System.IO.Path.Combine(assetDir, $"{key}.png");
-
-                if (!System.IO.File.Exists(filePath))
-                {
-                    Dbg($"Tier frame image not found: {filePath}");
-                    continue;
-                }
+                string url = TIER_FRAME_BASE_URL + key + ".png";
+                string imageLibKey = "BeastBoss.Frame." + key;
 
                 try
                 {
-                    byte[] imageBytes = System.IO.File.ReadAllBytes(filePath);
-                    string imageLibKey = $"BeastBoss.{key}";
-
-                    // Register with ImageLibrary (if not already registered)
-                    imageLib.Call("AddImage", filePath, imageLibKey);
-                    _tierFrameCache[key] = imageLibKey;
-
+                    ImageLibrary.Call("AddImage", url, imageLibKey, 0UL);
                     Dbg($"Registered tier frame image: {key} -> {imageLibKey}");
                 }
                 catch (System.Exception ex)
                 {
-                    Dbg($"Failed to load tier frame {key}: {ex.Message}");
+                    Dbg($"Failed to register tier frame {key}: {ex.Message}");
                 }
             }
         }
 
-        private void LoadTierFramesFromDisk(string assetDir, string[] tierFrameKeys)
+        private string GetTierFramePng(int tier, bool mythic)
         {
-            foreach (var key in tierFrameKeys)
+            if (ImageLibrary == null || !ImageLibrary.IsLoaded)
+                return string.Empty;
+
+            tier = Mathf.Clamp(tier, 1, 5);
+            string frameKey = mythic ? $"T{tier}M" : $"T{tier}";
+            string imageLibKey = "BeastBoss.Frame." + frameKey;
+
+            try
             {
-                string filePath = System.IO.Path.Combine(assetDir, $"{key}.png");
-
-                if (!System.IO.File.Exists(filePath))
-                {
-                    Dbg($"Tier frame image not found: {filePath}");
-                    continue;
-                }
-
-                try
-                {
-                    byte[] imageBytes = System.IO.File.ReadAllBytes(filePath);
-
-                    // Store in FileStorage (server)
-                    // Store() may return uint directly or a struct with .id depending on build
-                    try
-                    {
-                        // Try direct uint assignment first (newer/common builds)
-                        uint fileId = FileStorage.server.Store(imageBytes, FileStorage.Type.png, default(NetworkableId));
-                        _tierFrameCache[key] = fileId;
-                        Dbg($"Cached tier frame image: {key} -> FileStorage ID {fileId}");
-                    }
-                    catch
-                    {
-                        // Fallback: Store() might return a struct with .id property (older builds)
-                        try
-                        {
-                            dynamic storageResult = FileStorage.server.Store(imageBytes, FileStorage.Type.png, default(NetworkableId));
-                            uint fileId = (uint)storageResult.id;
-                            _tierFrameCache[key] = fileId;
-                            Dbg($"Cached tier frame image: {key} -> FileStorage ID {fileId}");
-                        }
-                        catch (System.Exception fallbackEx)
-                        {
-                            Dbg($"Failed to cache tier frame {key} (fallback): {fallbackEx.Message}");
-                        }
-                    }
-                }
-                catch (System.Exception ex)
-                {
-                    Dbg($"Failed to cache tier frame {key}: {ex.Message}");
-                }
+                object result = ImageLibrary.Call("GetImage", imageLibKey);
+                return result != null ? result.ToString() : string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
             }
         }
 
@@ -2300,13 +2222,6 @@ namespace Oxide.Plugins
                 return Mathf.Clamp(tier, 1, 5);
 
             return 1;
-        }
-
-        private object GetTierFrameImage(string frameKey)
-        {
-            if (_tierFrameCache.TryGetValue(frameKey, out var image))
-                return image;
-            return null;
         }
 
         // ==================== PER-PLAYER TIER PROGRESSION ====================
@@ -3434,9 +3349,8 @@ namespace Oxide.Plugins
             }, "Hud", "BeastBossHUD");
 
             // Try to add tier frame image
-            string frameKey = GetTierFrameKey(tier, mythic);
-            object frameImage = GetTierFrameImage(frameKey);
-            if (frameImage != null)
+            string framePng = GetTierFramePng(tier, mythic);
+            if (!string.IsNullOrEmpty(framePng))
             {
                 // Add frame image element (layered at bottom)
                 var frameElement = new CuiElement
@@ -3445,26 +3359,13 @@ namespace Oxide.Plugins
                     Parent = "BeastBossHUD",
                     Components = new List<ICuiComponent>
                     {
+                        new CuiRawImageComponent
+                        {
+                            Png = framePng
+                        },
                         new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMin = "", OffsetMax = "" }
                     }
                 };
-
-                // Determine if image is string (ImageLibrary) or uint (FileStorage)
-                if (frameImage is string imageLibKey)
-                {
-                    frameElement.Components.Add(new CuiRawImageComponent
-                    {
-                        Url = imageLibKey,
-                        Sprite = "assets/content/ui/ui.background.tile.psd"
-                    });
-                }
-                else if (frameImage is uint fileId)
-                {
-                    frameElement.Components.Add(new CuiRawImageComponent
-                    {
-                        Png = fileId.ToString()
-                    });
-                }
 
                 container.Add(frameElement);
             }
