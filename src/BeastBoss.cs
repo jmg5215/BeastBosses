@@ -2019,8 +2019,9 @@ namespace Oxide.Plugins
                     float hpFrac = 1f;
                     try
                     {
-                        float cur = boss.health;
-                        float max = boss.MaxHealth();
+                        var combat = boss as BaseCombatEntity;
+                        float cur = combat != null ? combat.health : 0f;
+                        float max = combat != null ? combat.MaxHealth() : 1f;
                         if (max <= 0f) max = 1f;
                         hpFrac = Mathf.Clamp01(cur / max);
                     }
