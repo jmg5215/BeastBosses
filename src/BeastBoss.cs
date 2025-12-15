@@ -2855,9 +2855,9 @@ namespace Oxide.Plugins
             container.entityOwner = dropEntity;
             try { dropEntity.lootPanelName = "generic"; } catch { }
             
-            // Set drop reason and network update for proper client handling
-            dropEntity.DropReason = DroppedItemContainer.DropReasonEnum.PlayerLoot;
-            dropEntity.SendNetworkUpdate();
+            // 'DropReason' isn't available on all server builds; don't set it.
+            // Just ensure the entity/network state is updated for proper client handling.
+            dropEntity.SendNetworkUpdateImmediate();
             
             dropEntity.ResetRemovalTime();
             dropEntity.Spawn();
